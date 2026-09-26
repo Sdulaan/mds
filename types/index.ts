@@ -4,6 +4,15 @@ export type EntityType = 'VENDOR' | 'CUSTOMER';
 export type TransactionType = 'CREDIT' | 'DEBIT';
 export type TransactionStatus = 'PENDING' | 'CLEARED' | 'BOUNCED';
 
+export const TRANSACTION_TYPES: TransactionType[] = ['CREDIT', 'DEBIT'];
+export const TRANSACTION_STATUSES: TransactionStatus[] = ['PENDING', 'CLEARED', 'BOUNCED'];
+
+/** Credits are received from customers; debits are paid to vendors. */
+export const ENTITY_TYPE_FOR: Record<TransactionType, EntityType> = {
+  CREDIT: 'CUSTOMER',
+  DEBIT: 'VENDOR',
+};
+
 export interface Entity {
   id: string;
   name: string;
@@ -21,6 +30,7 @@ export interface Transaction {
   status: TransactionStatus;
   grn_number?: string | null;
   remarks?: string | null;
+  cleared_at?: string | null;
   created_at: string;
 }
 

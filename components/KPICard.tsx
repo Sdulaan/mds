@@ -4,7 +4,8 @@ interface KPICardProps {
   subtitle?: string;
   icon: React.ReactNode;
   gradient: string;
-  glowColor: string;
+  /** Full Tailwind class (e.g. 'hover:shadow-sky-500/10') — must be a literal so Tailwind generates it. */
+  glowClass: string;
 }
 
 export default function KPICard({
@@ -13,10 +14,10 @@ export default function KPICard({
   subtitle,
   icon,
   gradient,
-  glowColor,
+  glowClass,
 }: KPICardProps) {
   return (
-    <div className={`relative overflow-hidden rounded-2xl border border-white/10 bg-slate-800/60 backdrop-blur-sm p-6 transition-transform duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-${glowColor}/10`}>
+    <div className={`relative overflow-hidden rounded-2xl border border-white/10 bg-slate-800/60 backdrop-blur-sm p-6 transition-transform duration-300 hover:-translate-y-1 hover:shadow-xl ${glowClass}`}>
       {/* Background glow */}
       <div className={`absolute -right-6 -top-6 h-32 w-32 rounded-full ${gradient} opacity-10 blur-2xl`} />
 

@@ -1,7 +1,18 @@
 -- MDS Pharmacy Cheque Management System
--- Run this once in the Neon DB SQL editor to initialize tables
+-- Run this once in the Neon DB SQL editor to initialize tables.
+-- (Existing databases created before auth was added: run scripts/migrations/001_auth_and_cleared_at.sql instead.)
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- ======================================
+-- Table: users (Login accounts)
+-- ======================================
+CREATE TABLE IF NOT EXISTS users (
+  id            UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+  username      VARCHAR(64)  NOT NULL UNIQUE,
+  password_hash TEXT         NOT NULL,
+  created_at    TIMESTAMPTZ  DEFAULT NOW()
+);
 
 -- ======================================
 -- Table: entities (Vendors & Customers)
@@ -26,12 +37,13 @@ CREATE TABLE IF NOT EXISTS transactions (
   status           VARCHAR(20)    NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'CLEARED', 'BOUNCED')),
   grn_number       VARCHAR(100),
   remarks          TEXT,
+  cleared_at       TIMESTAMPTZ,   -- set when status becomes CLEARED
   created_at       TIMESTAMP      DEFAULT NOW()
 );
 
 -- Indexes for common filter queries
-CREATE INDEX IF NOT EXISTS idx_transactions_status   ON transactions(status);
-CREATE INDEX IF NOT EXISTS idx_transactions_type     ON transactions(transaction_type);
-CREATE INDEX IF NOT EXISTS idx_transactions_date     ON transactions(cheque_date);
-CREATE INDEX IF NOT EXISTS idx_transactions_entity   ON transactions(entity_id);
-CREATE INDEX IF NOT EXISTS idx_transactions_month    ON transactions(DATE_TRUNC('month', cheque_date));
+CREATE INDEX IF NOT EXISTS idx_transactions_status     ON transactions(status);
+CREATE INDEX IF NOT EXISTS idx_transactions_type       ON transactions(transaction_type);
+CREATE INDEX IF NOT EXISTS idx_transactions_date       ON transactions(cheque_date);
+CREATE INDEX IF NOT EXISTS idx_transactions_entity     ON transactions(entity_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_cleared_at ON transactions(cleared_at);

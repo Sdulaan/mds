@@ -1,10 +1,10 @@
 import { Suspense } from 'react';
 import Link from 'next/link';
-import { getEntities } from '@/actions/entityActions';
+import type { Metadata } from 'next';
+import { getEntities } from '@/lib/queries';
 import AddChequeForm from './AddChequeForm';
 
 export const dynamic = 'force-dynamic';
-import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
   title: 'Add Cheque',
@@ -64,9 +64,9 @@ export default function AddChequePage() {
           All new cheques are set to <strong className="text-slate-300">PENDING</strong> status by default.
           Update the status from the Ledger page once the cheque clears.
           Need to add a new vendor or customer? Visit the{' '}
-          <a href="/entities" className="text-violet-400 underline hover:text-violet-300">
+          <Link href="/entities" className="text-violet-400 underline hover:text-violet-300">
             Entities page
-          </a>.
+          </Link>.
         </p>
       </div>
     </div>

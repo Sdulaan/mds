@@ -2,13 +2,19 @@
 
 import { revalidatePath } from 'next/cache';
 import { sql } from '@/lib/db';
-import type {
-  TransactionWithEntity,
-  TransactionFilters,
-  DashboardMetrics,
-  ActionResult,
-  TransactionStatus,
+import { getSession } from '@/lib/auth';
+import {
+  ENTITY_TYPE_FOR,
+  TRANSACTION_STATUSES,
+  TRANSACTION_TYPES,
+  type ActionResult,
+  type TransactionStatus,
+  type TransactionType,
 } from '@/types';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_AMOUNT = 99_999_999.99; // DECIMAL(10, 2)
+const UNAUTHORIZED: ActionResult = { success: false, message: 'Your session has expired. Please sign in again.' };
 
 // ─── addTransaction ───────────────────────────────────────────────────────────
 
@@ -16,25 +22,52 @@ export async function addTransaction(
   _prevState: ActionResult,
   formData: FormData
 ): Promise<ActionResult> {
+  if (!(await getSession())) return UNAUTHORIZED;
+
   try {
-    const transaction_type = formData.get('transaction_type') as string;
-    const entity_id = formData.get('entity_id') as string;
-    const cheque_number = formData.get('cheque_number') as string;
-    const cheque_date = formData.get('cheque_date') as string;
+    const transaction_type = formData.get('transaction_type') as TransactionType;
+    const entity_id = String(formData.get('entity_id') ?? '');
+    const cheque_number = String(formData.get('cheque_number') ?? '').trim();
+    const cheque_date = String(formData.get('cheque_date') ?? '');
     const amount = parseFloat(formData.get('amount') as string);
-    const grn_number = (formData.get('grn_number') as string) || null;
-    const remarks = (formData.get('remarks') as string) || null;
+    const grn_number = String(formData.get('grn_number') ?? '').trim() || null;
+    const remarks = String(formData.get('remarks') ?? '').trim() || null;
 
     if (!transaction_type || !entity_id || !cheque_number || !cheque_date || isNaN(amount)) {
       return { success: false, message: 'Please fill in all required fields.' };
     }
 
-    if (!['CREDIT', 'DEBIT'].includes(transaction_type)) {
+    if (!TRANSACTION_TYPES.includes(transaction_type)) {
       return { success: false, message: 'Invalid transaction type.' };
+    }
+
+    if (!UUID_RE.test(entity_id)) {
+      return { success: false, message: 'Please select a valid entity.' };
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(cheque_date)) {
+      return { success: false, message: 'Invalid cheque date.' };
     }
 
     if (amount <= 0) {
       return { success: false, message: 'Amount must be greater than zero.' };
+    }
+
+    if (amount > MAX_AMOUNT) {
+      return { success: false, message: 'Amount is too large (maximum Rs. 99,999,999.99).' };
+    }
+
+    // Credits must come from a customer, debits must go to a vendor.
+    const entity = await sql`SELECT type FROM entities WHERE id = ${entity_id}`;
+    if (entity.length === 0) {
+      return { success: false, message: 'Selected entity no longer exists.' };
+    }
+    const expectedType = ENTITY_TYPE_FOR[transaction_type];
+    if (entity[0].type !== expectedType) {
+      return {
+        success: false,
+        message: `A ${transaction_type.toLowerCase()} cheque must be linked to a ${expectedType.toLowerCase()}.`,
+      };
     }
 
     await sql`
@@ -54,60 +87,31 @@ export async function addTransaction(
   }
 }
 
-// ─── getTransactions ──────────────────────────────────────────────────────────
-
-export async function getTransactions(
-  filters: TransactionFilters = {}
-): Promise<TransactionWithEntity[]> {
-  const { type = 'ALL', status = 'ALL', month } = filters;
-
-  // Build conditional clauses
-  const typeClause = type !== 'ALL' ? sql`AND t.transaction_type = ${type}` : sql``;
-  const statusClause = status !== 'ALL' ? sql`AND t.status = ${status}` : sql``;
-  const monthClause = month
-    ? sql`AND TO_CHAR(t.cheque_date, 'YYYY-MM') = ${month}`
-    : sql``;
-
-  const rows = await sql`
-    SELECT
-      t.id,
-      t.transaction_type,
-      t.entity_id,
-      t.cheque_number,
-      t.cheque_date::text,
-      t.amount,
-      t.status,
-      t.grn_number,
-      t.remarks,
-      t.created_at::text,
-      e.name AS entity_name,
-      e.type AS entity_type
-    FROM transactions t
-    JOIN entities e ON e.id = t.entity_id
-    WHERE 1=1
-      ${typeClause}
-      ${statusClause}
-      ${monthClause}
-    ORDER BY t.cheque_date DESC, t.created_at DESC
-  `;
-
-  return rows as TransactionWithEntity[];
-}
-
 // ─── updateTransactionStatus ──────────────────────────────────────────────────
 
 export async function updateTransactionStatus(
   id: string,
   newStatus: TransactionStatus
 ): Promise<ActionResult> {
+  if (!(await getSession())) return UNAUTHORIZED;
+
   try {
-    if (!['PENDING', 'CLEARED', 'BOUNCED'].includes(newStatus)) {
+    if (!TRANSACTION_STATUSES.includes(newStatus)) {
       return { success: false, message: 'Invalid status.' };
     }
 
+    if (!UUID_RE.test(id)) {
+      return { success: false, message: 'Transaction not found.' };
+    }
+
+    // cleared_at records when the cheque actually cleared (used by "Cleared This Month").
     const result = await sql`
       UPDATE transactions
-      SET status = ${newStatus}
+      SET status = ${newStatus},
+          cleared_at = CASE
+            WHEN ${newStatus}::text = 'CLEARED' THEN COALESCE(CASE WHEN status = 'CLEARED' THEN cleared_at END, NOW())
+            ELSE NULL
+          END
       WHERE id = ${id}
       RETURNING id
     `;
@@ -124,69 +128,4 @@ export async function updateTransactionStatus(
     console.error('[updateTransactionStatus]', error);
     return { success: false, message: 'Failed to update status.' };
   }
-}
-
-// ─── getMetrics ───────────────────────────────────────────────────────────────
-
-export async function getMetrics(): Promise<DashboardMetrics> {
-  const now = new Date();
-  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-
-  const [pendingCredits, pendingDebits, clearedThisMonth, totalOutstanding] =
-    await Promise.all([
-      sql`
-        SELECT COALESCE(SUM(amount), 0) AS total
-        FROM transactions
-        WHERE status = 'PENDING' AND transaction_type = 'CREDIT'
-      `,
-      sql`
-        SELECT COALESCE(SUM(amount), 0) AS total
-        FROM transactions
-        WHERE status = 'PENDING' AND transaction_type = 'DEBIT'
-      `,
-      sql`
-        SELECT COALESCE(SUM(amount), 0) AS total
-        FROM transactions
-        WHERE status = 'CLEARED'
-          AND TO_CHAR(cheque_date, 'YYYY-MM') = ${currentMonth}
-      `,
-      sql`
-        SELECT COALESCE(SUM(amount), 0) AS total
-        FROM transactions
-        WHERE status = 'PENDING'
-      `,
-    ]);
-
-  return {
-    pendingCredits: parseFloat(String(pendingCredits[0]?.total ?? 0)),
-    pendingDebits: parseFloat(String(pendingDebits[0]?.total ?? 0)),
-    clearedThisMonth: parseFloat(String(clearedThisMonth[0]?.total ?? 0)),
-    totalOutstanding: parseFloat(String(totalOutstanding[0]?.total ?? 0)),
-  };
-}
-
-// ─── getRecentTransactions ────────────────────────────────────────────────────
-
-export async function getRecentTransactions(limit = 5): Promise<TransactionWithEntity[]> {
-  const rows = await sql`
-    SELECT
-      t.id,
-      t.transaction_type,
-      t.entity_id,
-      t.cheque_number,
-      t.cheque_date::text,
-      t.amount,
-      t.status,
-      t.grn_number,
-      t.remarks,
-      t.created_at::text,
-      e.name AS entity_name,
-      e.type AS entity_type
-    FROM transactions t
-    JOIN entities e ON e.id = t.entity_id
-    ORDER BY t.created_at DESC
-    LIMIT ${limit}
-  `;
-
-  return rows as TransactionWithEntity[];
 }

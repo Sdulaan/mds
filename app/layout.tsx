@@ -1,10 +1,9 @@
 import type { Metadata } from 'next';
-import { Geist } from 'next/font/google';
+import { Inter } from 'next/font/google';
 import './globals.css';
-import Navbar from '@/components/Navbar';
 
-const geist = Geist({
-  variable: '--font-geist-sans',
+const inter = Inter({
+  variable: '--font-inter',
   subsets: ['latin'],
 });
 
@@ -18,14 +17,11 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<'/'>) {
   return (
-    <html lang="en" className={`${geist.variable} h-full`}>
+    <html lang="en" className={`${inter.variable} h-full`}>
       <body className="min-h-dvh antialiased">
         {/* Animated gradient background */}
         <div className="animated-bg" aria-hidden="true" />
-        <Navbar />
-        <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
-          {children}
-        </main>
+        {children}
       </body>
     </html>
   );

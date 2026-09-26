@@ -1,14 +1,12 @@
 'use client';
 
-import { useActionState, useEffect, useState } from 'react';
-import { useFormStatus } from 'react-dom';
+import { useState } from 'react';
+import Link from 'next/link';
 import { addTransaction } from '@/actions/transactionActions';
-import type { Entity, ActionResult } from '@/types';
+import { useFormAction } from '@/components/useFormAction';
+import { ENTITY_TYPE_FOR, type Entity } from '@/types';
 
-const initialState: ActionResult = { success: false, message: '' };
-
-function SubmitButton() {
-  const { pending } = useFormStatus();
+function SubmitButton({ pending }: { pending: boolean }) {
   return (
     <button
       id="submit-cheque-btn"
@@ -36,25 +34,18 @@ interface AddChequeFormProps {
 }
 
 export default function AddChequeForm({ entities }: AddChequeFormProps) {
-  const [state, formAction] = useActionState(addTransaction, initialState);
+  const { state, pending, formRef, onSubmit } = useFormAction(addTransaction);
   const [txType, setTxType] = useState<'CREDIT' | 'DEBIT'>('CREDIT');
-  const [formKey, setFormKey] = useState(0);
-
-  useEffect(() => {
-    if (state.success) {
-      setFormKey((k) => k + 1); // Reset form on success
-    }
-  }, [state]);
 
   const inputClass =
     'w-full rounded-xl border border-white/10 bg-slate-800/80 px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500 transition-colors';
   const labelClass = 'block text-sm font-medium text-slate-300 mb-1.5';
 
-  const vendors = entities.filter((e) => e.type === 'VENDOR');
-  const customers = entities.filter((e) => e.type === 'CUSTOMER');
+  // Credits come from customers, debits go to vendors (also enforced on the server).
+  const eligible = entities.filter((e) => e.type === ENTITY_TYPE_FOR[txType]);
 
   return (
-    <form key={formKey} action={formAction} className="space-y-6">
+    <form ref={formRef} onSubmit={onSubmit} className="space-y-6">
       {/* Feedback Toast */}
       {state.message && (
         <div
@@ -139,31 +130,19 @@ export default function AddChequeForm({ entities }: AddChequeFormProps) {
         <label htmlFor="entity_id" className={labelClass}>
           {txType === 'CREDIT' ? 'Customer / Debtor' : 'Vendor / Creditor'} *
         </label>
-        <select id="entity_id" name="entity_id" required className={inputClass}>
-          <option value="">Select an entity...</option>
-          {txType === 'CREDIT' ? (
-            <optgroup label="Customers">
-              {customers.map((e) => (
-                <option key={e.id} value={e.id}>{e.name}</option>
-              ))}
-            </optgroup>
-          ) : (
-            <optgroup label="Vendors">
-              {vendors.map((e) => (
-                <option key={e.id} value={e.id}>{e.name}</option>
-              ))}
-            </optgroup>
-          )}
-          {/* Show all if needed */}
-          <optgroup label="All Entities">
-            {entities.map((e) => (
-              <option key={e.id} value={e.id}>{e.name} ({e.type})</option>
-            ))}
-          </optgroup>
+        {/* key resets the selection when the transaction type changes */}
+        <select key={txType} id="entity_id" name="entity_id" required defaultValue="" className={inputClass}>
+          <option value="" disabled>
+            Select a {txType === 'CREDIT' ? 'customer' : 'vendor'}...
+          </option>
+          {eligible.map((e) => (
+            <option key={e.id} value={e.id}>{e.name}</option>
+          ))}
         </select>
-        {entities.length === 0 && (
+        {eligible.length === 0 && (
           <p className="mt-1.5 text-xs text-amber-400">
-            No entities found. <a href="/entities" className="underline hover:text-amber-300">Add one first →</a>
+            No {txType === 'CREDIT' ? 'customers' : 'vendors'} found.{' '}
+            <Link href="/entities" className="underline hover:text-amber-300">Add one first →</Link>
           </p>
         )}
       </div>
@@ -235,7 +214,7 @@ export default function AddChequeForm({ entities }: AddChequeFormProps) {
         />
       </div>
 
-      <SubmitButton />
+      <SubmitButton pending={pending} />
     </form>
   );
 }

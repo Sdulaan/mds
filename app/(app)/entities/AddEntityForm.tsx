@@ -1,14 +1,9 @@
 'use client';
 
-import { useActionState } from 'react';
-import { useFormStatus } from 'react-dom';
 import { addEntity } from '@/actions/entityActions';
-import type { ActionResult } from '@/types';
+import { useFormAction } from '@/components/useFormAction';
 
-const initialState: ActionResult = { success: false, message: '' };
-
-function SubmitButton() {
-  const { pending } = useFormStatus();
+function SubmitButton({ pending }: { pending: boolean }) {
   return (
     <button
       id="add-entity-btn"
@@ -22,7 +17,7 @@ function SubmitButton() {
 }
 
 export default function AddEntityForm() {
-  const [state, formAction] = useActionState(addEntity, initialState);
+  const { state, pending, formRef, onSubmit } = useFormAction(addEntity);
 
   const inputClass =
     'w-full rounded-xl border border-white/10 bg-slate-800/80 px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500 transition-colors';
@@ -44,7 +39,7 @@ export default function AddEntityForm() {
         </div>
       )}
 
-      <form action={formAction} className="flex flex-wrap items-end gap-3">
+      <form ref={formRef} onSubmit={onSubmit} className="flex flex-wrap items-end gap-3">
         <div className="flex-1 min-w-40">
           <label htmlFor="entity-name" className="mb-1.5 block text-xs font-medium text-slate-400">
             Name *
@@ -67,7 +62,7 @@ export default function AddEntityForm() {
             <option value="CUSTOMER">Customer (Debtor)</option>
           </select>
         </div>
-        <SubmitButton />
+        <SubmitButton pending={pending} />
       </form>
     </div>
   );

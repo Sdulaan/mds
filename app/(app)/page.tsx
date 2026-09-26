@@ -1,33 +1,19 @@
 import { Suspense } from 'react';
 import Link from 'next/link';
 import { ArrowRight, TrendingUp, TrendingDown, CheckCircle, AlertCircle } from 'lucide-react';
-import { getMetrics, getRecentTransactions } from '@/actions/transactionActions';
-
-export const dynamic = 'force-dynamic';
+import type { Metadata } from 'next';
+import { getMetrics, getRecentTransactions } from '@/lib/queries';
+import { currentHour, currentMonthKey, formatDate, monthLabel } from '@/lib/dates';
+import { formatAmount } from '@/lib/format';
 import KPICard from '@/components/KPICard';
 import StatusBadge from '@/components/StatusBadge';
-import type { Metadata } from 'next';
+
+export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: 'Dashboard',
   description: 'MDS Pharmacy cheque management dashboard — key metrics and recent activity.',
 };
-
-function formatAmount(amount: number) {
-  return new Intl.NumberFormat('en-LK', {
-    style: 'currency',
-    currency: 'LKR',
-    minimumFractionDigits: 2,
-  }).format(amount);
-}
-
-function formatDate(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
-}
 
 async function DashboardContent() {
   const [metrics, recent] = await Promise.all([
@@ -35,8 +21,7 @@ async function DashboardContent() {
     getRecentTransactions(5),
   ]);
 
-  const now = new Date();
-  const monthLabel = now.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+  const thisMonth = monthLabel(currentMonthKey());
 
   const kpis = [
     {
@@ -45,7 +30,7 @@ async function DashboardContent() {
       subtitle: 'Awaiting bank clearance',
       icon: <TrendingUp className="h-6 w-6 text-white" />,
       gradient: 'bg-gradient-to-br from-sky-500 to-blue-600',
-      glowColor: 'sky-500',
+      glowClass: 'hover:shadow-sky-500/10',
     },
     {
       title: 'Pending Debits',
@@ -53,15 +38,15 @@ async function DashboardContent() {
       subtitle: 'Outstanding payments',
       icon: <TrendingDown className="h-6 w-6 text-white" />,
       gradient: 'bg-gradient-to-br from-orange-500 to-red-600',
-      glowColor: 'orange-500',
+      glowClass: 'hover:shadow-orange-500/10',
     },
     {
       title: 'Cleared This Month',
       value: formatAmount(metrics.clearedThisMonth),
-      subtitle: monthLabel,
+      subtitle: `Cleared during ${thisMonth}`,
       icon: <CheckCircle className="h-6 w-6 text-white" />,
       gradient: 'bg-gradient-to-br from-emerald-500 to-green-600',
-      glowColor: 'emerald-500',
+      glowClass: 'hover:shadow-emerald-500/10',
     },
     {
       title: 'Total Outstanding',
@@ -69,7 +54,7 @@ async function DashboardContent() {
       subtitle: 'All pending cheques',
       icon: <AlertCircle className="h-6 w-6 text-white" />,
       gradient: 'bg-gradient-to-br from-violet-500 to-purple-600',
-      glowColor: 'violet-500',
+      glowClass: 'hover:shadow-violet-500/10',
     },
   ];
 
@@ -200,23 +185,20 @@ function DashboardSkeleton() {
 }
 
 export default function DashboardPage() {
+  const hour = currentHour();
+  const greeting = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
+
   return (
     <div>
       {/* Page Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-white">
-          Good{' '}
-          {new Date().getHours() < 12
-            ? 'morning'
-            : new Date().getHours() < 17
-            ? 'afternoon'
-            : 'evening'}{' '}
-          👋
+          Good {greeting} 👋
         </h1>
         <p className="mt-1 text-slate-400">
           Here&apos;s your cheque management overview for{' '}
           <span className="text-violet-400 font-medium">
-            {new Date().toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}
+            {monthLabel(currentMonthKey())}
           </span>
         </p>
       </div>

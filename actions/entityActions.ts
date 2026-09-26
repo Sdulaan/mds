@@ -2,18 +2,11 @@
 
 import { revalidatePath } from 'next/cache';
 import { sql } from '@/lib/db';
-import type { Entity, ActionResult, EntityType } from '@/types';
+import { getSession } from '@/lib/auth';
+import type { ActionResult, EntityType } from '@/types';
 
-// ─── getEntities ──────────────────────────────────────────────────────────────
-
-export async function getEntities(): Promise<Entity[]> {
-  const rows = await sql`
-    SELECT id, name, type, created_at::text
-    FROM entities
-    ORDER BY type, name ASC
-  `;
-  return rows as Entity[];
-}
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UNAUTHORIZED: ActionResult = { success: false, message: 'Your session has expired. Please sign in again.' };
 
 // ─── addEntity ────────────────────────────────────────────────────────────────
 
@@ -21,12 +14,18 @@ export async function addEntity(
   _prevState: ActionResult,
   formData: FormData
 ): Promise<ActionResult> {
+  if (!(await getSession())) return UNAUTHORIZED;
+
   try {
-    const name = (formData.get('name') as string)?.trim();
+    const name = String(formData.get('name') ?? '').trim();
     const type = formData.get('type') as EntityType;
 
     if (!name) {
       return { success: false, message: 'Entity name is required.' };
+    }
+
+    if (name.length > 255) {
+      return { success: false, message: 'Entity name must be 255 characters or fewer.' };
     }
 
     if (!['VENDOR', 'CUSTOMER'].includes(type)) {
@@ -59,6 +58,12 @@ export async function addEntity(
 // ─── deleteEntity ─────────────────────────────────────────────────────────────
 
 export async function deleteEntity(id: string): Promise<ActionResult> {
+  if (!(await getSession())) return UNAUTHORIZED;
+
+  if (!UUID_RE.test(id)) {
+    return { success: false, message: 'Invalid entity.' };
+  }
+
   try {
     // Check if any transactions reference this entity
     const txCount = await sql`

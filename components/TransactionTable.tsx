@@ -3,51 +3,53 @@
 import { useState, useTransition } from 'react';
 import { updateTransactionStatus } from '@/actions/transactionActions';
 import StatusBadge from '@/components/StatusBadge';
-import type { TransactionWithEntity, TransactionStatus } from '@/types';
+import { formatDate } from '@/lib/dates';
+import { formatAmount } from '@/lib/format';
+import { TRANSACTION_STATUSES, type TransactionWithEntity, type TransactionStatus } from '@/types';
 
 interface TransactionTableProps {
   transactions: TransactionWithEntity[];
 }
 
-function formatAmount(amount: string | number) {
-  return new Intl.NumberFormat('en-LK', {
-    style: 'currency',
-    currency: 'LKR',
-    minimumFractionDigits: 2,
-  }).format(Number(amount));
-}
-
-function formatDate(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
-}
-
-const STATUS_CYCLE: Record<TransactionStatus, TransactionStatus> = {
-  PENDING: 'CLEARED',
-  CLEARED: 'BOUNCED',
-  BOUNCED: 'PENDING',
+const STATUS_ACTIONS: Record<TransactionStatus, { label: string; className: string }> = {
+  PENDING: { label: 'Pending', className: 'hover:border-amber-400/40 hover:text-amber-300' },
+  CLEARED: { label: 'Cleared', className: 'hover:border-emerald-400/40 hover:text-emerald-300' },
+  BOUNCED: { label: 'Bounced', className: 'hover:border-rose-400/40 hover:text-rose-300' },
 };
 
-function StatusToggle({ id, status }: { id: string; status: TransactionStatus }) {
+function StatusActions({ id, status }: { id: string; status: TransactionStatus }) {
   const [isPending, startTransition] = useTransition();
-  const nextStatus = STATUS_CYCLE[status];
+  const [error, setError] = useState('');
+
+  const change = (next: TransactionStatus) => {
+    setError('');
+    startTransition(async () => {
+      const result = await updateTransactionStatus(id, next);
+      if (!result.success) setError(result.message);
+    });
+  };
 
   return (
-    <button
-      onClick={() => {
-        startTransition(() => {
-          updateTransactionStatus(id, nextStatus);
-        });
-      }}
-      disabled={isPending}
-      title={`Mark as ${nextStatus}`}
-      className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-all hover:bg-white/10 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
-    >
-      {isPending ? '...' : `→ ${nextStatus.charAt(0) + nextStatus.slice(1).toLowerCase()}`}
-    </button>
+    <div>
+      <div className="flex gap-1.5">
+        {TRANSACTION_STATUSES.filter((s) => s !== status).map((next) => (
+          <button
+            key={next}
+            onClick={() => change(next)}
+            disabled={isPending}
+            title={`Mark as ${STATUS_ACTIONS[next].label}`}
+            className={`whitespace-nowrap rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed ${STATUS_ACTIONS[next].className}`}
+          >
+            {isPending ? '...' : `→ ${STATUS_ACTIONS[next].label}`}
+          </button>
+        ))}
+      </div>
+      {error && (
+        <p role="alert" className="mt-1 text-xs text-rose-400">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -119,7 +121,7 @@ export default function TransactionTable({ transactions }: TransactionTableProps
                   {tx.grn_number || <span className="text-slate-600">—</span>}
                 </td>
                 <td className="px-4 py-3.5">
-                  <StatusToggle id={tx.id} status={tx.status} />
+                  <StatusActions id={tx.id} status={tx.status} />
                 </td>
               </tr>
             ))}

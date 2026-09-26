@@ -1,55 +1,41 @@
 'use client';
 
-import { useRouter, useSearchParams, usePathname } from 'next/navigation';
-import { useCallback } from 'react';
-import type { TransactionType, TransactionStatus } from '@/types';
+import { useRouter, usePathname } from 'next/navigation';
+import { filtersToQuery } from '@/lib/filters';
+import type { TransactionFilters } from '@/types';
 
 interface FilterBarProps {
   currentType: string;
   currentStatus: string;
   currentMonth: string;
+  /** Month options computed on the server (app timezone), so server and client render identically. */
+  months: { value: string; label: string }[];
 }
 
-const MONTHS = Array.from({ length: 24 }, (_, i) => {
-  const d = new Date();
-  d.setMonth(d.getMonth() - i);
-  const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-  const label = d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
-  return { value, label };
-});
-
-export default function FilterBar({ currentType, currentStatus, currentMonth }: FilterBarProps) {
+export default function FilterBar({ currentType, currentStatus, currentMonth, months }: FilterBarProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
 
-  const createQueryString = useCallback(
-    (updates: Record<string, string>) => {
-      const params = new URLSearchParams(searchParams.toString());
-      Object.entries(updates).forEach(([key, value]) => {
-        if (value === 'ALL' || value === '') {
-          params.delete(key);
-        } else {
-          params.set(key, value);
-        }
-      });
-      return params.toString();
-    },
-    [searchParams]
-  );
-
-  const handleChange = (key: string, value: string) => {
-    router.push(`${pathname}?${createQueryString({ [key]: value })}`, { scroll: false });
+  const handleChange = (key: keyof TransactionFilters, value: string) => {
+    const next = { type: currentType, status: currentStatus, month: currentMonth, [key]: value } as TransactionFilters;
+    const qs = filtersToQuery(next);
+    router.push(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   };
 
   const selectClass =
     'rounded-lg border border-white/10 bg-slate-800 px-3 py-2 text-sm text-white focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500 transition-colors cursor-pointer';
 
+  // Keep an out-of-range month (e.g. from an old link) selectable.
+  const monthOptions =
+    currentMonth && !months.some((m) => m.value === currentMonth)
+      ? [{ value: currentMonth, label: currentMonth }, ...months]
+      : months;
+
   return (
-    <div className="flex flex-wrap items-center gap-3">
+    <div className="flex flex-wrap items-end gap-3">
       {/* Type Filter */}
       <div className="flex flex-col gap-1">
-        <label className="text-xs font-medium text-slate-400">Type</label>
+        <label htmlFor="filter-type" className="text-xs font-medium text-slate-400">Type</label>
         <select
           id="filter-type"
           value={currentType}
@@ -64,7 +50,7 @@ export default function FilterBar({ currentType, currentStatus, currentMonth }: 
 
       {/* Status Filter */}
       <div className="flex flex-col gap-1">
-        <label className="text-xs font-medium text-slate-400">Status</label>
+        <label htmlFor="filter-status" className="text-xs font-medium text-slate-400">Status</label>
         <select
           id="filter-status"
           value={currentStatus}
@@ -80,7 +66,7 @@ export default function FilterBar({ currentType, currentStatus, currentMonth }: 
 
       {/* Month Filter */}
       <div className="flex flex-col gap-1">
-        <label className="text-xs font-medium text-slate-400">Month</label>
+        <label htmlFor="filter-month" className="text-xs font-medium text-slate-400">Month</label>
         <select
           id="filter-month"
           value={currentMonth}
@@ -88,7 +74,7 @@ export default function FilterBar({ currentType, currentStatus, currentMonth }: 
           className={selectClass}
         >
           <option value="">All Months</option>
-          {MONTHS.map(({ value, label }) => (
+          {monthOptions.map(({ value, label }) => (
             <option key={value} value={value}>
               {label}
             </option>
@@ -98,15 +84,12 @@ export default function FilterBar({ currentType, currentStatus, currentMonth }: 
 
       {/* Clear Filters */}
       {(currentType !== 'ALL' || currentStatus !== 'ALL' || currentMonth !== '') && (
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-transparent">Clear</label>
-          <button
-            onClick={() => router.push(pathname, { scroll: false })}
-            className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-400 hover:bg-white/10 hover:text-white transition-colors"
-          >
-            Clear Filters
-          </button>
-        </div>
+        <button
+          onClick={() => router.push(pathname, { scroll: false })}
+          className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-400 hover:bg-white/10 hover:text-white transition-colors"
+        >
+          Clear Filters
+        </button>
       )}
     </div>
   );
