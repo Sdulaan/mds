@@ -1,208 +1,203 @@
 import { Suspense } from 'react';
 import Link from 'next/link';
-import { ArrowRight, TrendingUp, TrendingDown, CheckCircle, AlertCircle } from 'lucide-react';
 import type { Metadata } from 'next';
-import { getMetrics, getRecentTransactions } from '@/lib/queries';
-import { currentHour, currentMonthKey, formatDate, monthLabel } from '@/lib/dates';
+import { ArrowRight, Ban, CheckCircle2, Clock, Hand, Landmark, Plus, RotateCcw, Wallet } from 'lucide-react';
+import { requireUser } from '@/lib/auth';
+import { getDashboard, type MonthPoint } from '@/lib/data/dashboard';
+import { currentHour, currentMonthKey, monthLabel } from '@/lib/dates';
 import { formatAmount } from '@/lib/format';
+import { btnPrimary, btnSecondary, card } from '@/lib/ui';
+import ChartCard from '@/components/charts/ChartCard';
+import RankedBars from '@/components/charts/RankedBars';
 import KPICard from '@/components/KPICard';
-import StatusBadge from '@/components/StatusBadge';
+import PageHeader from '@/components/PageHeader';
 
 export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: 'Dashboard',
-  description: 'MDS Pharmacy cheque management dashboard — key metrics and recent activity.',
+  description: 'Cheque management dashboard — key metrics and trends.',
 };
 
+const toColumns = (points: MonthPoint[]) =>
+  points.map((p) => ({
+    key: p.month,
+    label: monthLabel(p.month, 'short').split(' ')[0],
+    title: monthLabel(p.month),
+    value: p.amount,
+    count: p.count,
+  }));
+
+const n = (count: number, word = 'cheque') => `${count.toLocaleString()} ${word}${count === 1 ? '' : 's'}`;
+
+function SectionHeading({ title, href, linkText }: { title: string; href: string; linkText: string }) {
+  return (
+    <div className="mb-3 flex items-center justify-between">
+      <h2 className="text-lg font-semibold text-fg">{title}</h2>
+      <Link href={href} className="flex items-center gap-1 text-sm font-medium text-brand hover:text-brand-hover">
+        {linkText} <ArrowRight className="h-3.5 w-3.5" />
+      </Link>
+    </div>
+  );
+}
+
 async function DashboardContent() {
-  const [metrics, recent] = await Promise.all([
-    getMetrics(),
-    getRecentTransactions(5),
-  ]);
-
+  const { receivables: r, payables: p } = await getDashboard();
   const thisMonth = monthLabel(currentMonthKey());
-
-  const kpis = [
-    {
-      title: 'Pending Credits',
-      value: formatAmount(metrics.pendingCredits),
-      subtitle: 'Awaiting bank clearance',
-      icon: <TrendingUp className="h-6 w-6 text-white" />,
-      gradient: 'bg-gradient-to-br from-sky-500 to-blue-600',
-      glowClass: 'hover:shadow-sky-500/10',
-    },
-    {
-      title: 'Pending Debits',
-      value: formatAmount(metrics.pendingDebits),
-      subtitle: 'Outstanding payments',
-      icon: <TrendingDown className="h-6 w-6 text-white" />,
-      gradient: 'bg-gradient-to-br from-orange-500 to-red-600',
-      glowClass: 'hover:shadow-orange-500/10',
-    },
-    {
-      title: 'Cleared This Month',
-      value: formatAmount(metrics.clearedThisMonth),
-      subtitle: `Cleared during ${thisMonth}`,
-      icon: <CheckCircle className="h-6 w-6 text-white" />,
-      gradient: 'bg-gradient-to-br from-emerald-500 to-green-600',
-      glowClass: 'hover:shadow-emerald-500/10',
-    },
-    {
-      title: 'Total Outstanding',
-      value: formatAmount(metrics.totalOutstanding),
-      subtitle: 'All pending cheques',
-      icon: <AlertCircle className="h-6 w-6 text-white" />,
-      gradient: 'bg-gradient-to-br from-violet-500 to-purple-600',
-      glowClass: 'hover:shadow-violet-500/10',
-    },
-  ];
+  const receivedThisMonth = r.receivedByMonth[r.receivedByMonth.length - 1];
 
   return (
-    <>
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {kpis.map((kpi) => (
-          <KPICard key={kpi.title} {...kpi} />
-        ))}
-      </div>
-
-      {/* Recent Activity */}
-      <div className="mt-8">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-white">Recent Activity</h2>
-          <Link
-            href="/ledger"
-            className="flex items-center gap-1 text-sm text-violet-400 hover:text-violet-300 transition-colors"
-          >
-            View all <ArrowRight className="h-3.5 w-3.5" />
-          </Link>
+    <div className="space-y-10">
+      {/* ── Receivables (SRS 1 §5) ─────────────────────────────────────────── */}
+      <section>
+        <SectionHeading title="Customer cheques (receivables)" href="/receivables" linkText="Open register" />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <KPICard
+            title="Received this month"
+            value={formatAmount(receivedThisMonth.amount)}
+            subtitle={`${n(receivedThisMonth.count)} dated ${thisMonth}`}
+            icon={<Landmark className="h-5 w-5" />}
+            tone="credit"
+          />
+          <KPICard
+            title="Cheques in hand"
+            value={formatAmount(r.inHand.amount)}
+            subtitle={`${n(r.inHand.count)} not yet deposited`}
+            icon={<Hand className="h-5 w-5" />}
+            tone="pending"
+          />
+          <KPICard
+            title="Credited this month"
+            value={formatAmount(r.creditedThisMonth.amount)}
+            subtitle={`${n(r.creditedThisMonth.count)} · ${formatAmount(r.deposited.amount)} awaiting credit`}
+            icon={<CheckCircle2 className="h-5 w-5" />}
+            tone="cleared"
+          />
+          <KPICard
+            title="Returned this month"
+            value={formatAmount(r.returnedThisMonth.amount)}
+            subtitle={n(r.returnedThisMonth.count)}
+            icon={<RotateCcw className="h-5 w-5" />}
+            tone="bounced"
+          />
         </div>
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <ChartCard
+            title="Cheques received per month"
+            subtitle="Total value by cheque date — hover a column for the count"
+            data={toColumns(r.receivedByMonth)}
+            barClass="bg-credit"
+          />
+          <ChartCard
+            title="Credited cheques per month"
+            subtitle="Value credited to the bank each month"
+            data={toColumns(r.creditedByMonth)}
+            barClass="bg-cleared"
+            countLabel="credited"
+          />
+        </div>
+      </section>
 
-        {recent.length === 0 ? (
-          <div className="glass-card flex flex-col items-center justify-center py-16 text-center">
-            <p className="text-slate-400">No transactions yet.</p>
-            <Link
-              href="/add-cheque"
-              className="mt-4 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500 transition-colors"
-            >
-              Add your first cheque
-            </Link>
-          </div>
-        ) : (
-          <div className="glass-card overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-white/10">
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">Date</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">Entity</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">Type</th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">Amount</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {recent.map((tx) => (
-                    <tr key={tx.id} className="hover:bg-white/3 transition-colors">
-                      <td className="px-4 py-3 text-slate-300">{formatDate(tx.cheque_date)}</td>
-                      <td className="px-4 py-3 font-medium text-white">{tx.entity_name}</td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`rounded-md px-2 py-0.5 text-xs font-semibold ${
-                            tx.transaction_type === 'CREDIT'
-                              ? 'bg-sky-400/10 text-sky-400'
-                              : 'bg-orange-400/10 text-orange-400'
-                          }`}
-                        >
-                          {tx.transaction_type}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right font-semibold text-white">
-                        {formatAmount(Number(tx.amount))}
-                      </td>
-                      <td className="px-4 py-3">
-                        <StatusBadge status={tx.status} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Quick Actions */}
-      <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Link
-          href="/add-cheque"
-          className="glass-card group flex items-center gap-4 p-5 transition-all hover:-translate-y-0.5 hover:border-violet-500/30 hover:shadow-lg hover:shadow-violet-500/10"
-        >
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 shadow-lg">
-            <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-          </div>
-          <div>
-            <p className="font-semibold text-white group-hover:text-violet-300 transition-colors">Add New Cheque</p>
-            <p className="text-sm text-slate-400">Record a credit or debit cheque</p>
-          </div>
-          <ArrowRight className="ml-auto h-5 w-5 text-slate-600 group-hover:text-violet-400 transition-colors" />
-        </Link>
-
-        <Link
-          href="/ledger"
-          className="glass-card group flex items-center gap-4 p-5 transition-all hover:-translate-y-0.5 hover:border-violet-500/30 hover:shadow-lg hover:shadow-violet-500/10"
-        >
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-slate-600 to-slate-700 shadow-lg">
-            <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-            </svg>
-          </div>
-          <div>
-            <p className="font-semibold text-white group-hover:text-violet-300 transition-colors">View Full Ledger</p>
-            <p className="text-sm text-slate-400">Filter, search and export cheques</p>
-          </div>
-          <ArrowRight className="ml-auto h-5 w-5 text-slate-600 group-hover:text-violet-400 transition-colors" />
-        </Link>
-      </div>
-    </>
+      {/* ── Payables (SRS 2 §6) ────────────────────────────────────────────── */}
+      <section>
+        <SectionHeading title="Creditor cheques (payables)" href="/payables" linkText="Open register" />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <KPICard
+            title="Outstanding cheques"
+            value={formatAmount(p.outstanding.amount)}
+            subtitle={`${n(p.outstanding.count)} not yet cleared`}
+            icon={<Clock className="h-5 w-5" />}
+            tone="debit"
+          />
+          <KPICard
+            title="Cleared cheques"
+            value={formatAmount(p.cleared.amount)}
+            subtitle={`${n(p.cleared.count)} · ${formatAmount(p.clearedThisMonth.amount)} this month`}
+            icon={<CheckCircle2 className="h-5 w-5" />}
+            tone="cleared"
+          />
+          <KPICard
+            title="Cancelled cheques"
+            value={formatAmount(p.cancelled.amount)}
+            subtitle={n(p.cancelled.count)}
+            icon={<Ban className="h-5 w-5" />}
+            tone="neutral"
+          />
+          <KPICard
+            title="Creditors outstanding"
+            value={formatAmount(p.creditorsOutstanding)}
+            subtitle="Opening balances + purchases − payments"
+            icon={<Wallet className="h-5 w-5" />}
+            tone="brand"
+          />
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <ChartCard
+            title="Monthly outstanding cheque trend"
+            subtitle="Uncleared cheques at each month end"
+            data={toColumns(p.outstandingTrend)}
+            barClass="bg-debit"
+            countLabel="outstanding"
+          />
+          <ChartCard
+            title="Monthly cleared cheque trend"
+            subtitle="Value cleared by the bank each month"
+            data={toColumns(p.clearedByMonth)}
+            barClass="bg-cleared"
+            countLabel="cleared"
+          />
+        </div>
+        <section className={`${card} mt-4 p-5`}>
+          <h3 className="text-base font-semibold text-fg">Creditor-wise outstanding amount</h3>
+          <p className="mb-4 text-xs text-muted">Top 10 creditors by uncleared cheque value · amount · number of cheques</p>
+          <RankedBars data={p.topCreditors} barClass="bg-debit" />
+        </section>
+      </section>
+    </div>
   );
 }
 
 function DashboardSkeleton() {
   return (
-    <div className="animate-pulse space-y-8">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="animate-pulse space-y-6">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[...Array(4)].map((_, i) => (
-          <div key={i} className="h-32 rounded-2xl bg-slate-800/60" />
+          <div key={i} className="h-32 rounded-xl bg-surface-2" />
         ))}
       </div>
-      <div className="h-64 rounded-2xl bg-slate-800/60" />
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="h-72 rounded-xl bg-surface-2" />
+        <div className="h-72 rounded-xl bg-surface-2" />
+      </div>
     </div>
   );
 }
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const user = await requireUser();
   const hour = currentHour();
   const greeting = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
 
   return (
     <div>
-      {/* Page Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-white">
-          Good {greeting} 👋
-        </h1>
-        <p className="mt-1 text-slate-400">
-          Here&apos;s your cheque management overview for{' '}
-          <span className="text-violet-400 font-medium">
-            {monthLabel(currentMonthKey())}
-          </span>
-        </p>
-      </div>
-
+      <PageHeader
+        title={`Good ${greeting}${user.fullName ? `, ${user.fullName.split(' ')[0]}` : ''}`}
+        description={
+          <>
+            Cheque overview for <span className="font-medium text-brand">{monthLabel(currentMonthKey())}</span>
+          </>
+        }
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Link href="/cheques/new?type=CREDIT" className={btnPrimary}>
+              <Plus className="h-4 w-4" /> Customer cheque
+            </Link>
+            <Link href="/cheques/new?type=DEBIT" className={btnSecondary}>
+              <Plus className="h-4 w-4" /> Creditor cheque
+            </Link>
+          </div>
+        }
+      />
       <Suspense fallback={<DashboardSkeleton />}>
         <DashboardContent />
       </Suspense>

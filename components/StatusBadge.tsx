@@ -1,33 +1,27 @@
-import type { TransactionStatus } from '@/types';
+import { STATUS_LABEL, type ChequeStatus } from '@/types';
 
 interface StatusBadgeProps {
-  status: TransactionStatus;
+  status: ChequeStatus;
   size?: 'sm' | 'md';
 }
 
-const config: Record<TransactionStatus, { label: string; className: string }> = {
-  PENDING: {
-    label: 'Pending',
-    className: 'bg-amber-400/10 text-amber-400 ring-1 ring-amber-400/30',
-  },
-  CLEARED: {
-    label: 'Cleared',
-    className: 'bg-emerald-400/10 text-emerald-400 ring-1 ring-emerald-400/30',
-  },
-  BOUNCED: {
-    label: 'Bounced',
-    className: 'bg-rose-400/10 text-rose-400 ring-1 ring-rose-400/30',
-  },
+// Literal class names so Tailwind generates them.
+const TONE: Record<ChequeStatus, string> = {
+  IN_HAND: 'bg-pending-soft text-pending',
+  PENDING: 'bg-pending-soft text-pending',
+  DEPOSITED: 'bg-credit-soft text-credit',
+  CREDITED: 'bg-cleared-soft text-cleared',
+  CLEARED: 'bg-cleared-soft text-cleared',
+  RETURNED: 'bg-bounced-soft text-bounced',
+  CANCELLED: 'bg-surface-2 text-muted',
 };
 
 export default function StatusBadge({ status, size = 'sm' }: StatusBadgeProps) {
-  const { label, className } = config[status] ?? config.PENDING;
   const sizeClass = size === 'sm' ? 'px-2 py-0.5 text-xs' : 'px-2.5 py-1 text-sm';
-
   return (
-    <span className={`inline-flex items-center rounded-full font-medium ${sizeClass} ${className}`}>
-      <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-current opacity-80" />
-      {label}
+    <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full font-medium ${sizeClass} ${TONE[status] ?? TONE.PENDING}`}>
+      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+      {STATUS_LABEL[status] ?? status}
     </span>
   );
 }

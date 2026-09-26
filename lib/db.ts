@@ -42,3 +42,13 @@ export async function query(text: string, params: unknown[] = []): Promise<any[]
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return result as any[];
 }
+
+/**
+ * Run several parameterised statements atomically (all succeed or none do).
+ * Uses Neon's HTTP transaction support, so it works in serverless functions.
+ */
+export async function transaction(statements: { text: string; params: unknown[] }[]): Promise<void> {
+  if (statements.length === 0) return;
+  const db = getInstance();
+  await db.transaction(statements.map((s) => db.query(s.text, s.params)));
+}

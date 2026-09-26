@@ -17,9 +17,8 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (session && isLogin) {
-    return NextResponse.redirect(new URL('/', request.url));
-  }
+  // Signed-in users visiting /login are redirected by the login page itself, after it
+  // confirms the account is still active (a deactivated user keeps a valid cookie).
 
   return NextResponse.next();
 }

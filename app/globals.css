@@ -1,57 +1,171 @@
 @import "tailwindcss";
 
-/* ─── Base Reset & Globals ─────────────────────────────────────────────────── */
-*, *::before, *::after {
-  box-sizing: border-box;
+/* ─── Theme ──────────────────────────────────────────────────────────────────
+   Colours come from the M.D.S Pharmaceutical letterhead: logo green, navy ink,
+   and the capsule's blue/amber (used for credits/debits).
+   Theme = data-theme="light|dark" on <html>; with no attribute we follow the OS. */
+
+:root {
+  color-scheme: light;
+  --bg: #f5f9f6;
+  --surface: #ffffff;
+  --surface-2: #f0f6f2;
+  --line: #dde8e1;
+  --line-strong: #c5d6cb;
+  --fg: #132b3f;          /* letterhead navy */
+  --muted: #53667a;
+  --subtle: #7d8e9c;
+  --brand: #168a43;       /* logo green, darkened for text contrast */
+  --brand-hover: #117538;
+  --brand-fg: #ffffff;
+  --brand-soft: #e6f5eb;
+  --brand-bright: #22c55e;
+  --credit: #0b6fb3;
+  --credit-soft: #e5f2fb;
+  --debit: #a8660b;
+  --debit-soft: #fcf2df;
+  --pending: #a45a06;
+  --pending-soft: #fdf3dc;
+  --cleared: #15803d;
+  --cleared-soft: #dff5e6;
+  --bounced: #be123c;
+  --bounced-soft: #fde7eb;
+  --shadow: 0 1px 2px rgb(19 43 63 / 0.05), 0 1px 3px rgb(19 43 63 / 0.06);
+  --wave-a: rgb(34 197 94 / 0.16);
+  --wave-b: rgb(34 197 94 / 0.08);
 }
 
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #08110e;
+  --surface: #0f1b17;
+  --surface-2: #14241e;
+  --line: #203129;
+  --line-strong: #2d4238;
+  --fg: #e5eee8;
+  --muted: #9db0a6;
+  --subtle: #6d8178;
+  --brand: #3ccf6c;
+  --brand-hover: #5ad884;
+  --brand-fg: #04200e;
+  --brand-soft: rgb(60 207 108 / 0.12);
+  --brand-bright: #3ccf6c;
+  --credit: #5cb6f2;
+  --credit-soft: rgb(92 182 242 / 0.12);
+  --debit: #eeb54a;
+  --debit-soft: rgb(238 181 74 / 0.12);
+  --pending: #f5b945;
+  --pending-soft: rgb(245 185 69 / 0.12);
+  --cleared: #4ade80;
+  --cleared-soft: rgb(74 222 128 / 0.12);
+  --bounced: #fb7185;
+  --bounced-soft: rgb(251 113 133 / 0.12);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  --wave-a: rgb(60 207 108 / 0.06);
+  --wave-b: rgb(60 207 108 / 0.03);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #08110e;
+    --surface: #0f1b17;
+    --surface-2: #14241e;
+    --line: #203129;
+    --line-strong: #2d4238;
+    --fg: #e5eee8;
+    --muted: #9db0a6;
+    --subtle: #6d8178;
+    --brand: #3ccf6c;
+    --brand-hover: #5ad884;
+    --brand-fg: #04200e;
+    --brand-soft: rgb(60 207 108 / 0.12);
+    --brand-bright: #3ccf6c;
+    --credit: #5cb6f2;
+    --credit-soft: rgb(92 182 242 / 0.12);
+    --debit: #eeb54a;
+    --debit-soft: rgb(238 181 74 / 0.12);
+    --pending: #f5b945;
+    --pending-soft: rgb(245 185 69 / 0.12);
+    --cleared: #4ade80;
+    --cleared-soft: rgb(74 222 128 / 0.12);
+    --bounced: #fb7185;
+    --bounced-soft: rgb(251 113 133 / 0.12);
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+    --wave-a: rgb(60 207 108 / 0.10);
+    --wave-b: rgb(60 207 108 / 0.05);
+  }
+}
+
+/* `dark:` utilities follow the same rule as the tokens above. */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+}
+
+@theme inline {
+  --font-sans: var(--font-inter), system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-montserrat), var(--font-inter), system-ui, sans-serif;
+
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-fg: var(--brand-fg);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-bright: var(--brand-bright);
+  --color-credit: var(--credit);
+  --color-credit-soft: var(--credit-soft);
+  --color-debit: var(--debit);
+  --color-debit-soft: var(--debit-soft);
+  --color-pending: var(--pending);
+  --color-pending-soft: var(--pending-soft);
+  --color-cleared: var(--cleared);
+  --color-cleared-soft: var(--cleared-soft);
+  --color-bounced: var(--bounced);
+  --color-bounced-soft: var(--bounced-soft);
+
+  --shadow-card: var(--shadow);
+}
+
+/* ─── Base ───────────────────────────────────────────────────────────────── */
 html {
-  scroll-behavior: smooth;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 body {
-  font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
-  background-color: #020817;
-  color: #e2e8f0;
+  background-color: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
   min-height: 100dvh;
 }
 
-/* ─── Animated Background ──────────────────────────────────────────────────── */
-.animated-bg {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  background: radial-gradient(ellipse at 10% 20%, rgba(109, 40, 217, 0.12) 0%, transparent 50%),
-              radial-gradient(ellipse at 90% 80%, rgba(59, 130, 246, 0.08) 0%, transparent 50%),
-              radial-gradient(ellipse at 50% 50%, rgba(15, 23, 42, 1) 0%, #020817 100%);
+h1, h2, h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
 }
 
-/* ─── Scrollbar ─────────────────────────────────────────────────────────────── */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: #0f172a;
-}
-::-webkit-scrollbar-thumb {
-  background: #334155;
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+/* Table headers default to left; utilities (e.g. text-right) override this. */
+th {
+  text-align: left;
 }
 
-/* ─── Form Elements ─────────────────────────────────────────────────────────── */
-input[type="text"],
-input[type="password"],
-input[type="number"],
-input[type="date"],
-textarea,
-select {
-  color-scheme: dark;
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 
 /* Remove number spinners */
@@ -64,28 +178,13 @@ input[type="number"] {
   -moz-appearance: textfield;
 }
 
-/* ─── Utility: Glass Card ───────────────────────────────────────────────────── */
-.glass-card {
-  background: rgba(30, 41, 59, 0.6);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 1rem;
+/* ─── Letterhead waves (decorative background) ───────────────────────────── */
+.brand-waves {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 340px;
+  z-index: -1;
+  pointer-events: none;
 }
-
-/* ─── Utility: Gradient Text ────────────────────────────────────────────────── */
-.gradient-text {
-  background: linear-gradient(135deg, #a78bfa, #818cf8);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-/* ─── Utility: Glow ─────────────────────────────────────────────────────────── */
-.glow-violet {
-  box-shadow: 0 0 30px rgba(139, 92, 246, 0.15);
-}
-
-/* ─── Table cell hover ──────────────────────────────────────────────────────── */
-.table-row-hover:hover {
-  background: rgba(255, 255, 255, 0.03);
-}
+.brand-waves .wave-a { fill: var(--wave-a); }
+.brand-waves .wave-b { fill: var(--wave-b); }

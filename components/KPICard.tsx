@@ -1,38 +1,38 @@
+import { card } from '@/lib/ui';
+
+type Tone = 'credit' | 'debit' | 'cleared' | 'brand' | 'bounced' | 'pending' | 'neutral';
+
+// Literal class names per tone so Tailwind generates them.
+const tones: Record<Tone, { chip: string; bar: string }> = {
+  credit: { chip: 'bg-credit-soft text-credit', bar: 'bg-credit' },
+  debit: { chip: 'bg-debit-soft text-debit', bar: 'bg-debit' },
+  cleared: { chip: 'bg-cleared-soft text-cleared', bar: 'bg-cleared' },
+  brand: { chip: 'bg-brand-soft text-brand', bar: 'bg-brand' },
+  bounced: { chip: 'bg-bounced-soft text-bounced', bar: 'bg-bounced' },
+  pending: { chip: 'bg-pending-soft text-pending', bar: 'bg-pending' },
+  neutral: { chip: 'bg-surface-2 text-muted', bar: 'bg-line-strong' },
+};
+
 interface KPICardProps {
   title: string;
   value: string;
   subtitle?: string;
   icon: React.ReactNode;
-  gradient: string;
-  /** Full Tailwind class (e.g. 'hover:shadow-sky-500/10') — must be a literal so Tailwind generates it. */
-  glowClass: string;
+  tone: Tone;
 }
 
-export default function KPICard({
-  title,
-  value,
-  subtitle,
-  icon,
-  gradient,
-  glowClass,
-}: KPICardProps) {
+export default function KPICard({ title, value, subtitle, icon, tone }: KPICardProps) {
+  const t = tones[tone];
   return (
-    <div className={`relative overflow-hidden rounded-2xl border border-white/10 bg-slate-800/60 backdrop-blur-sm p-6 transition-transform duration-300 hover:-translate-y-1 hover:shadow-xl ${glowClass}`}>
-      {/* Background glow */}
-      <div className={`absolute -right-6 -top-6 h-32 w-32 rounded-full ${gradient} opacity-10 blur-2xl`} />
-
-      <div className="relative flex items-start justify-between">
-        <div className="flex-1">
-          <p className="text-sm font-medium text-slate-400">{title}</p>
-          <p className="mt-2 text-3xl font-bold tracking-tight text-white">{value}</p>
-          {subtitle && (
-            <p className="mt-1 text-xs text-slate-500">{subtitle}</p>
-          )}
-        </div>
-        <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${gradient} shadow-lg`}>
-          {icon}
-        </div>
+    <div className={`${card} relative overflow-hidden p-5`}>
+      <span className={`absolute inset-x-0 top-0 h-1 ${t.bar}`} aria-hidden="true" />
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-medium text-muted">{title}</p>
+        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${t.chip}`}>{icon}</div>
       </div>
+      {/* Full width so large LKR amounts (hundreds of millions) never get cut off */}
+      <p className="mt-2 break-words text-xl font-bold leading-tight tracking-tight text-fg tabular-nums 2xl:text-2xl">{value}</p>
+      {subtitle && <p className="mt-1 text-xs text-subtle">{subtitle}</p>}
     </div>
   );
 }

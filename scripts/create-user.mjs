@@ -1,8 +1,9 @@
 // Create a login user, or reset an existing user's password.
 //
-//   node --env-file=.env.local scripts/create-user.mjs <username>
+//   node --env-file=.env.local scripts/create-user.mjs <username> [--admin]
 //
-// You'll be prompted for the password (input is hidden).
+// You'll be prompted for the password (input is hidden). The first account is always an
+// administrator. Day-to-day, administrators manage users from the app (Administration → Users).
 import { randomBytes, scrypt as scryptCb } from 'node:crypto';
 import { promisify } from 'node:util';
 import { neon } from '@neondatabase/serverless';
@@ -67,9 +68,17 @@ if (password !== confirm) {
 
 const sql = neon(process.env.DATABASE_URL);
 const hash = await hashPassword(password);
+// New accounts are administrators when --admin is given or when they're the first account;
+// otherwise standard users. Existing accounts keep their role (only the password changes).
+const [{ count }] = await sql`SELECT COUNT(*)::int AS count FROM users`;
+const role = process.argv.includes('--admin') || count === 0 ? 'ADMIN' : 'STANDARD';
 const rows = await sql`
-  INSERT INTO users (username, password_hash) VALUES (${username}, ${hash})
+  INSERT INTO users (username, password_hash, role) VALUES (${username}, ${hash}, ${role})
   ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash
-  RETURNING (xmax = 0) AS inserted
+  RETURNING (xmax = 0) AS inserted, role
 `;
-console.log(rows[0]?.inserted ? `Created user "${username}".` : `Updated password for "${username}".`);
+console.log(
+  rows[0]?.inserted
+    ? `Created ${rows[0].role === 'ADMIN' ? 'administrator' : 'standard user'} "${username}".`
+    : `Updated password for "${username}".`
+);
