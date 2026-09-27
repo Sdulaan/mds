@@ -1,11 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { AlertCircle, AlertTriangle, Check, Loader2 } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Check, Loader2, Plus } from 'lucide-react';
 import { saveCheque } from '@/actions/chequeActions';
+import Combobox from '@/components/Combobox';
+import GrnPicker from '@/components/cheques/GrnPicker';
 import { useFormAction } from '@/components/useFormAction';
+import { allocate, unpaidTotal, type GrnOption } from '@/lib/grn-allocation';
+import { formatNumber } from '@/lib/format';
 import { alertError, alertSuccess, btnPrimary, btnSecondary, cn, input, label } from '@/lib/ui';
 import { ENTITY_LABEL, ENTITY_TYPE_FOR, type TransactionType, type TransactionWithEntity } from '@/types';
 
@@ -17,19 +21,53 @@ interface ChequeFormProps {
   today: string;
   isAdmin: boolean;
   readOnly?: boolean;
+  /** Creditor cheques: GRNs that can be paid (all creditors), and those already on this cheque. */
+  grnOptions?: GrnOption[];
+  initialGrnIds?: string[];
 }
 
-export default function ChequeForm({ type, cheque, entities, banks, today, isAdmin, readOnly = false }: ChequeFormProps) {
+export default function ChequeForm({
+  type, cheque, entities, banks, today, isAdmin, readOnly = false, grnOptions = [], initialGrnIds = [],
+}: ChequeFormProps) {
   const router = useRouter();
+  const [entityName, setEntityName] = useState(cheque?.entity_name ?? '');
+  const [bankName, setBankName] = useState(cheque?.bank_name ?? '');
+  const [grnIds, setGrnIds] = useState<string[]>(initialGrnIds);
+  const [amount, setAmount] = useState(cheque ? String(Number(cheque.amount)) : '');
   const { state, pending, formRef, onSubmit } = useFormAction(async (prev, fd) => {
     const result = await saveCheque(prev, fd);
     if (result.success && cheque) router.refresh();
+    // After adding, start the next cheque with empty dropdowns (the form reset only clears plain inputs).
+    if (result.success && !cheque) {
+      setEntityName('');
+      setBankName('');
+      setGrnIds([]);
+      setAmount('');
+    }
     return result;
   });
   const entityLabel = ENTITY_LABEL[ENTITY_TYPE_FOR[type]].one;
-  const [entityName, setEntityName] = useState(cheque?.entity_name ?? '');
   const match = entities.find((e) => e.name.toLowerCase() === entityName.trim().toLowerCase());
+  const entityOptions = useMemo(() => entities.map((e) => ({ value: e.name, hint: e.is_active ? undefined : 'Inactive' })), [entities]);
+  const newEntityHref = type === 'CREDIT' ? '/customers/new' : '/creditors/new';
+  const bankOptions = useMemo(() => banks.map((b) => ({ value: b })), [banks]);
   const isEdit = !!cheque;
+
+  // Creditor cheques pay the selected GRNs; picking GRNs fills in their unpaid total (still editable).
+  const isDebit = type === 'DEBIT';
+  const creditorGrns = useMemo(() => grnOptions.filter((g) => g.entity_id === match?.id), [grnOptions, match?.id]);
+  const selectedGrns = creditorGrns.filter((g) => grnIds.includes(g.id));
+  const onEntityChange = (name: string) => {
+    setEntityName(name);
+    const next = entities.find((e) => e.name.toLowerCase() === name.trim().toLowerCase());
+    if (next?.id !== match?.id) setGrnIds([]);
+  };
+  const onGrnChange = (ids: string[]) => {
+    setGrnIds(ids);
+    const total = unpaidTotal(creditorGrns.filter((g) => ids.includes(g.id)));
+    setAmount(total > 0 ? total.toFixed(2) : '');
+  };
+  const split = isDebit && selectedGrns.length ? allocate(Number(amount) || 0, selectedGrns) : null;
 
   return (
     <form ref={formRef} onSubmit={onSubmit} className="space-y-6">
@@ -48,38 +86,62 @@ export default function ChequeForm({ type, cheque, entities, banks, today, isAdm
         {/* Entity */}
         <div>
           <label htmlFor="entity_name" className={label}>{entityLabel} *</label>
-          <input
+          <Combobox
             id="entity_name"
-            list="entity-options"
             value={entityName}
-            onChange={(e) => setEntityName(e.target.value)}
-            placeholder={`Start typing a ${entityLabel.toLowerCase()} name…`}
-            autoComplete="off"
+            onChange={onEntityChange}
+            options={entityOptions}
+            placeholder={`Search ${entityLabel.toLowerCase()}s…`}
+            emptyText={`No ${entityLabel.toLowerCase()} matches this name`}
+            footer={
+              <Link href={newEntityHref} className="flex items-center gap-2 rounded-md px-2.5 py-2 text-sm font-medium text-brand hover:bg-surface-2">
+                <Plus className="h-4 w-4" /> Add a new {entityLabel.toLowerCase()}
+              </Link>
+            }
             required
-            className={input}
           />
-          <datalist id="entity-options">
-            {entities.map((e) => (
-              <option key={e.id} value={e.name}>{e.is_active ? '' : 'Inactive'}</option>
-            ))}
-          </datalist>
           {entityName && !match && (
             <p className="mt-1.5 text-xs text-pending">
               No {entityLabel.toLowerCase()} with this name.{' '}
-              <Link href={type === 'CREDIT' ? '/customers/new' : '/creditors/new'} className="font-medium underline">
+              <Link href={newEntityHref} className="font-medium underline">
                 Add a new {entityLabel.toLowerCase()} →
               </Link>
             </p>
           )}
         </div>
 
+        {isDebit && (
+          <div>
+            <label htmlFor="grn_ids" className={label}>GRN(s) *</label>
+            <GrnPicker id="grn_ids" options={creditorGrns} selected={grnIds} onChange={onGrnChange} disabled={!match} />
+            {match && creditorGrns.length === 0 && (
+              <p className="mt-1.5 text-xs text-pending">
+                {match.name} has no unpaid GRNs.{' '}
+                <Link href="/purchases" className="font-medium underline">Add the GRN in Purchases →</Link>
+              </p>
+            )}
+            {split && (
+              <ul className="mt-2 space-y-0.5 text-xs text-muted">
+                {split.allocations.map(({ grn, amount: paid }) => (
+                  <li key={grn.id}>
+                    GRN {grn.grn_number}: <span className="tabular-nums text-fg">{formatNumber(paid)}</span>
+                    {paid < grn.remaining ? ` — part payment, ${formatNumber(grn.remaining - paid)} left unpaid` : ' — fully paid'}
+                  </li>
+                ))}
+                {split.unused.map((grn) => (
+                  <li key={grn.id} className="text-bounced">GRN {grn.grn_number}: not reached by this amount — remove it or increase the amount</li>
+                ))}
+                {split.unallocated > 0 && (
+                  <li className="text-bounced">
+                    {formatNumber(split.unallocated)} more than the unpaid total of the selected GRNs ({formatNumber(unpaidTotal(selectedGrns))})
+                  </li>
+                )}
+              </ul>
+            )}
+          </div>
+        )}
+
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {type === 'DEBIT' && (
-            <div>
-              <label htmlFor="grn_number" className={label}>GRN Number</label>
-              <input id="grn_number" name="grn_number" defaultValue={cheque?.grn_number ?? ''} placeholder="e.g. 11492" className={input} />
-            </div>
-          )}
           <div>
             <label htmlFor="cheque_number" className={label}>Cheque Number *</label>
             <input id="cheque_number" name="cheque_number" required defaultValue={cheque?.cheque_number ?? ''} placeholder="e.g. 004521" className={input} />
@@ -95,19 +157,23 @@ export default function ChequeForm({ type, cheque, entities, banks, today, isAdm
               <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-sm text-subtle">Rs.</span>
               <input
                 id="amount" name="amount" type="number" required min="0.01" step="0.01" placeholder="0.00"
-                defaultValue={cheque ? Number(cheque.amount) : ''}
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
                 className={cn(input, 'pl-11 tabular-nums')}
               />
             </div>
           </div>
           <div>
             <label htmlFor="bank_name" className={label}>Bank Name</label>
-            <input id="bank_name" name="bank_name" list="bank-options" defaultValue={cheque?.bank_name ?? ''} placeholder="e.g. Commercial Bank" className={input} />
-            <datalist id="bank-options">
-              {banks.map((b) => (
-                <option key={b} value={b} />
-              ))}
-            </datalist>
+            <Combobox
+              id="bank_name"
+              name="bank_name"
+              value={bankName}
+              onChange={setBankName}
+              options={bankOptions}
+              placeholder="e.g. Commercial Bank"
+              emptyText="New bank — it will be saved as typed"
+            />
           </div>
           <div>
             <label htmlFor="entry_date" className={label}>Entry Date</label>
@@ -154,7 +220,7 @@ export default function ChequeForm({ type, cheque, entities, banks, today, isAdm
 
       {!readOnly && (
         <div className="flex flex-wrap gap-3">
-          <button type="submit" disabled={pending || !match} className={cn(btnPrimary, 'min-w-40 py-3')}>
+          <button type="submit" disabled={pending || !match || (isDebit && grnIds.length === 0)} className={cn(btnPrimary, 'min-w-40 py-3')}>
             {pending ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</> : isEdit ? 'Save Changes' : 'Add Cheque'}
           </button>
           <Link href={type === 'CREDIT' ? '/receivables' : '/payables'} className={cn(btnSecondary, 'py-3')}>

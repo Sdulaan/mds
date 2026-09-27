@@ -7,7 +7,7 @@ interface RankedBarsProps {
 
 /** Horizontal bars for "amount per creditor": direct labels, one hue, largest first. */
 export default function RankedBars({ data, barClass }: RankedBarsProps) {
-  if (data.length === 0) return <p className="py-10 text-center text-sm text-subtle">Nothing outstanding.</p>;
+  if (data.length === 0) return <p className="py-10 text-center text-sm text-subtle">No uncleared cheques.</p>;
   const max = Math.max(...data.map((d) => d.amount));
 
   return (

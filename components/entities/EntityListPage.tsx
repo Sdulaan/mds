@@ -1,15 +1,21 @@
 import Link from 'next/link';
 import { Plus, Search } from 'lucide-react';
-import { getEntities } from '@/lib/data/entities';
-import { formatAmount } from '@/lib/format';
+import { ENTITY_SORT_KEYS, getEntities } from '@/lib/data/entities';
+import { pick } from '@/lib/filters';
+import { parseSort, sortHref } from '@/lib/sort';
+import { formatNumber } from '@/lib/format';
 import { btnPrimary, card, cn, input, td, th } from '@/lib/ui';
 import PageHeader from '@/components/PageHeader';
+import SortHeader, { SortInputs } from '@/components/SortHeader';
 import { ENTITY_LABEL, type EntityType } from '@/types';
 
-export default async function EntityListPage({ type, q }: { type: EntityType; q?: string }) {
-  const entities = await getEntities(type, { q });
+export default async function EntityListPage({ type, searchParams }: { type: EntityType; searchParams: Record<string, string | string[] | undefined> }) {
+  const q = pick(searchParams, 'q')?.trim() || undefined;
+  const sort = parseSort(searchParams, ENTITY_SORT_KEYS);
+  const entities = await getEntities(type, { q, sort });
   const labels = ENTITY_LABEL[type];
   const base = type === 'CUSTOMER' ? '/customers' : '/creditors';
+  const href = (column: string) => sortHref(base, q ? `q=${encodeURIComponent(q)}` : '', sort, column);
   const active = entities.filter((e) => e.is_active).length;
 
   return (
@@ -29,6 +35,7 @@ export default async function EntityListPage({ type, q }: { type: EntityType; q?
       />
 
       <form className={`${card} mb-5 flex flex-wrap items-center gap-3 p-4`}>
+        <SortInputs sort={sort} />
         <div className="relative min-w-64 flex-1">
           <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-subtle" />
           <input
@@ -51,12 +58,12 @@ export default async function EntityListPage({ type, q }: { type: EntityType; q?
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-line bg-surface-2">
-                  <th className={th}>Name</th>
+                  <SortHeader label="Name" column="name" current={sort} href={href('name')} />
                   <th className={th}>Contact</th>
-                  <th className={th}>{type === 'CUSTOMER' ? 'Credit terms' : 'Opening balance'}</th>
-                  <th className={`${th} text-right`}>Cheques</th>
-                  <th className={`${th} text-right`}>{type === 'CUSTOMER' ? 'In hand / deposited' : 'Outstanding cheques'}</th>
-                  <th className={th}>Status</th>
+                  <SortHeader label={type === 'CUSTOMER' ? 'Credit terms' : 'Opening balance (LKR)'} column="terms" current={sort} href={href('terms')} />
+                  <SortHeader label="Cheques" column="cheques" current={sort} href={href('cheques')} align="right" />
+                  <SortHeader label={type === 'CUSTOMER' ? 'In hand / deposited (LKR)' : 'Uncleared cheques (LKR)'} column="outstanding" current={sort} href={href('outstanding')} align="right" />
+                  <SortHeader label="Status" column="status" current={sort} href={href('status')} />
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
@@ -72,11 +79,11 @@ export default async function EntityListPage({ type, q }: { type: EntityType; q?
                       {!e.contact_number && !e.email && <span className="text-subtle">—</span>}
                     </td>
                     <td className={`${td} text-muted`}>
-                      {type === 'CUSTOMER' ? e.credit_terms || '—' : Number(e.opening_balance) ? formatAmount(e.opening_balance) : '—'}
+                      {type === 'CUSTOMER' ? e.credit_terms || '—' : Number(e.opening_balance) ? formatNumber(e.opening_balance) : '—'}
                     </td>
                     <td className={`${td} text-right tabular-nums text-muted`}>{e.cheque_count}</td>
                     <td className={`${td} whitespace-nowrap text-right font-medium tabular-nums text-fg`}>
-                      {e.outstanding_amount ? formatAmount(e.outstanding_amount) : '—'}
+                      {e.outstanding_amount ? formatNumber(e.outstanding_amount) : '—'}
                     </td>
                     <td className={td}>
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${e.is_active ? 'bg-cleared-soft text-cleared' : 'bg-surface-2 text-muted'}`}>

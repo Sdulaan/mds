@@ -1,10 +1,13 @@
 'use server';
 
+import { randomUUID } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
-import { sql } from '@/lib/db';
+import { query, sql, transaction } from '@/lib/db';
 import { canDelete, canEdit, getCurrentUser, isAdmin } from '@/lib/auth';
 import { diff, logAudit } from '@/lib/audit';
 import { findDuplicates } from '@/lib/data/cheques';
+import { getGrnBalances, paidOn } from '@/lib/data/grns';
+import { allocate, unpaidTotal, type Allocation } from '@/lib/grn-allocation';
 import { todayKey, formatDate } from '@/lib/dates';
 import { isUuid } from '@/lib/filters';
 import { formatAmount } from '@/lib/format';
@@ -25,6 +28,49 @@ function revalidateCheques(type: TransactionType) {
   revalidatePath(BOOK_PATH[type]);
   revalidatePath('/');
   revalidatePath('/reports', 'layout');
+  if (type === 'DEBIT') revalidatePath('/purchases', 'layout');
+}
+
+/**
+ * Creditor cheques pay one or more GRNs (purchases) of the same creditor. The amount is applied
+ * oldest GRN first, each up to its unpaid balance; a GRN can be part-paid by several cheques.
+ * Cancelled cheques don't count, so cancelling one frees its GRNs for a new cheque.
+ */
+async function allocateGrns(
+  formData: FormData, entityId: string, amount: number, chequeId: string | undefined, cancelled: boolean
+): Promise<Allocation[]> {
+  const ids = [...new Set(formData.getAll('grn_ids').map(String).filter(isUuid))];
+  if (ids.length === 0) throw new FormError('Select at least one GRN for this cheque. Add the GRN under Purchases first if it is not listed.');
+  const grns = await getGrnBalances(ids, entityId, chequeId);
+  if (grns.length !== ids.length) throw new FormError('One of the selected GRNs no longer exists or belongs to another creditor. Please reselect.');
+
+  // A cancelled cheque pays nothing, so its GRN amounts are only kept for the record.
+  if (cancelled) return allocate(amount, grns.map((g) => ({ ...g, remaining: g.amount }))).allocations;
+
+  const paid = grns.filter((g) => g.remaining <= 0);
+  if (paid.length) throw new FormError(`GRN ${paid.map((g) => g.grn_number).join(', ')} is already fully paid. Remove it from this cheque.`);
+  const { allocations, unallocated, unused } = allocate(amount, grns);
+  if (unallocated > 0) {
+    throw new FormError(`The amount is more than the unpaid total of the selected GRNs (${formatAmount(unpaidTotal(grns))}). Select more GRNs or reduce the amount.`);
+  }
+  if (unused.length) {
+    throw new FormError(`The amount doesn't reach GRN ${unused.map((g) => g.grn_number).join(', ')}. Remove it or increase the amount.`);
+  }
+  return allocations;
+}
+
+/** Statements that replace a cheque's GRN links. */
+function grnLinkStatements(chequeId: string, allocations: Allocation[]) {
+  return [
+    { text: 'DELETE FROM cheque_grns WHERE transaction_id = $1', params: [chequeId] },
+    ...(allocations.length
+      ? [{
+          text: `INSERT INTO cheque_grns (transaction_id, purchase_id, amount)
+                 SELECT $1, UNNEST($2::uuid[]), UNNEST($3::numeric[])`,
+          params: [chequeId, allocations.map((a) => a.grn.id), allocations.map((a) => a.amount)],
+        }]
+      : []),
+  ];
 }
 
 interface StatusDates {
@@ -75,7 +121,6 @@ export async function saveCheque(_prev: ActionResult, formData: FormData): Promi
     const amount = money(formData, 'amount', 'Amount');
     const entryDate = optionalDate(formData, 'entry_date', 'Entry date') ?? todayKey();
     const bankName = optionalText(formData, 'bank_name', 100);
-    const grnNumber = optionalText(formData, 'grn_number', 100);
     const remarks = optionalText(formData, 'remarks', 2000);
 
     const entity = (await sql`SELECT type, name, is_active FROM entities WHERE id = ${entityId}`)[0];
@@ -98,14 +143,22 @@ export async function saveCheque(_prev: ActionResult, formData: FormData): Promi
         })
       : { deposited_date: null, cleared_date: null, returned_date: null, cancelled_date: null };
 
-    // SRS §7 duplicate control: warn, and only administrators may override.
-    const duplicates = await findDuplicates({
-      type, entityId, chequeNumber, bankName, grnNumber, excludeId: isEdit ? id : undefined,
-    });
+    // Creditor cheques: the GRNs they pay (the GRN text is kept for display, search and reports).
+    const allocations = type === 'DEBIT'
+      ? await allocateGrns(formData, entityId, amount, isEdit ? id : undefined, !!dates.cancelled_date)
+      : [];
+    const grnNumber = type === 'DEBIT' ? allocations.map((a) => a.grn.grn_number).join(', ') : null;
+
+    // SRS §7 duplicate control (creditor cheques only): warn, and only administrators may override.
+    // Customer cheques are never checked: cheques from different banks can share a number and the
+    // bank is optional, so a repeated customer cheque number is normal.
+    const duplicates = type === 'DEBIT'
+      ? await findDuplicates({ type, entityId, chequeNumber, bankName, excludeId: isEdit ? id : undefined })
+      : [];
     const override = formData.get('override_duplicate') === 'on';
     if (duplicates.length > 0 && !(override && isAdmin(user))) {
       const details = duplicates
-        .map((d) => `${d.field === 'grn_number' ? 'GRN' : 'Cheque no.'} ${d.value} (${d.entity_name}, ${formatDate(d.cheque_date)})`)
+        .map((d) => `Cheque no. ${d.value} (${d.entity_name}, ${formatDate(d.cheque_date)})`)
         .join('; ');
       return {
         success: false,
@@ -115,6 +168,7 @@ export async function saveCheque(_prev: ActionResult, formData: FormData): Promi
         }`,
       };
     }
+    const duplicateNote = duplicates.length ? ' — duplicate approved by administrator' : '';
 
     const values = {
       entity_id: entityId, cheque_number: chequeNumber, cheque_date: chequeDate, amount, bank_name: bankName,
@@ -122,40 +176,42 @@ export async function saveCheque(_prev: ActionResult, formData: FormData): Promi
     };
 
     if (existing) {
-      await sql`
-        UPDATE transactions SET
-          entity_id = ${entityId}, cheque_number = ${chequeNumber}, cheque_date = ${chequeDate}, amount = ${amount},
-          bank_name = ${bankName}, grn_number = ${grnNumber}, entry_date = ${entryDate}, remarks = ${remarks},
-          deposited_date = ${dates.deposited_date}, cleared_date = ${dates.cleared_date},
-          returned_date = ${dates.returned_date}, cancelled_date = ${dates.cancelled_date},
-          updated_at = NOW(), updated_by = ${user.id}
-        WHERE id = ${id}
-      `;
+      await transaction([
+        {
+          text: `UPDATE transactions SET
+                   entity_id = $2, cheque_number = $3, cheque_date = $4, amount = $5, bank_name = $6, grn_number = $7,
+                   entry_date = $8, remarks = $9, deposited_date = $10, cleared_date = $11, returned_date = $12,
+                   cancelled_date = $13, updated_at = NOW(), updated_by = $14
+                 WHERE id = $1`,
+          params: [id, entityId, chequeNumber, chequeDate, amount, bankName, grnNumber, entryDate, remarks,
+            dates.deposited_date, dates.cleared_date, dates.returned_date, dates.cancelled_date, user.id],
+        },
+        ...(type === 'DEBIT' ? grnLinkStatements(id, allocations) : []),
+      ]);
       const changes = diff(existing, values);
       if (Object.keys(changes).length > 0) {
         await logAudit({
           table: 'transactions', recordId: id, action: 'UPDATE', user, changes,
-          summary: `Edited cheque ${chequeNumber} (${entity.name})${changes.cheque_date ? ` — rescheduled to ${formatDate(chequeDate)}` : ''}${
-            duplicates.length ? ' — duplicate approved by administrator' : ''
-          }`,
+          summary: `Edited cheque ${chequeNumber} (${entity.name})${changes.cheque_date ? ` — rescheduled to ${formatDate(chequeDate)}` : ''}${duplicateNote}`,
         });
       }
       revalidateCheques(type);
       return { success: true, message: 'Cheque updated.' };
     }
 
-    const [row] = await sql`
-      INSERT INTO transactions
-        (transaction_type, entity_id, cheque_number, cheque_date, amount, bank_name, grn_number, entry_date, remarks, created_by)
-      VALUES
-        (${type}, ${entityId}, ${chequeNumber}, ${chequeDate}, ${amount}, ${bankName}, ${grnNumber}, ${entryDate}, ${remarks}, ${user.id})
-      RETURNING id
-    `;
+    const newId = randomUUID();
+    await transaction([
+      {
+        text: `INSERT INTO transactions
+                 (id, transaction_type, entity_id, cheque_number, cheque_date, amount, bank_name, grn_number, entry_date, remarks, created_by)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        params: [newId, type, entityId, chequeNumber, chequeDate, amount, bankName, grnNumber, entryDate, remarks, user.id],
+      },
+      ...(type === 'DEBIT' ? grnLinkStatements(newId, allocations) : []),
+    ]);
     await logAudit({
-      table: 'transactions', recordId: row.id, action: 'CREATE', user,
-      summary: `Added ${type === 'CREDIT' ? 'customer' : 'creditor'} cheque ${chequeNumber} — ${entity.name}, ${formatAmount(amount)}${
-        duplicates.length ? ' — duplicate approved by administrator' : ''
-      }`,
+      table: 'transactions', recordId: newId, action: 'CREATE', user,
+      summary: `Added ${type === 'CREDIT' ? 'customer' : 'creditor'} cheque ${chequeNumber} — ${entity.name}, ${formatAmount(amount)}${duplicateNote}`,
     });
     revalidateCheques(type);
     return { success: true, message: `Cheque ${chequeNumber} added.` };
@@ -253,6 +309,20 @@ export async function setChequeFlag(id: string, flag: StatusFlag, checked: boole
       }
     }
     const next = normaliseStatusDates(type, d);
+
+    if (type === 'DEBIT' && row.cancelled_date && !next.cancelled_date) {
+      const over = await query(
+        `SELECT p.grn_number FROM cheque_grns g JOIN purchases p ON p.id = g.purchase_id
+         WHERE g.transaction_id = $1 AND ${paidOn('$1')} + g.amount > p.amount + 0.005`,
+        [id]
+      );
+      if (over.length) {
+        return {
+          success: false,
+          message: `Can't restore this cheque: GRN ${over.map((r) => r.grn_number).join(', ')} has since been paid by another cheque.`,
+        };
+      }
+    }
 
     const [updated] = await sql`
       UPDATE transactions SET

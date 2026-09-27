@@ -1,6 +1,7 @@
 import 'server-only';
 import { query, sql } from '@/lib/db';
 import { requireAdmin, requireUser } from '@/lib/auth';
+import { sqlOrder, type Sort } from '@/lib/sort';
 import type { AppUser, AuditEntry } from '@/types';
 
 export async function getUsers(): Promise<AppUser[]> {
@@ -27,6 +28,16 @@ export interface ActivityFilters {
   action?: string;
   from?: string;
   to?: string;
+  sort?: Sort;
+}
+
+export const ACTIVITY_SORT_KEYS = ['when', 'user', 'action'] as const;
+
+/** Default: newest first. */
+function activityOrderBy(sort?: Sort): string {
+  const columns: Record<string, string> = { when: 'created_at', user: 'LOWER(username)', action: 'action' };
+  const column = sort?.sort ? columns[sort.sort] : undefined;
+  return column && sort ? `${sqlOrder(column, sort.dir)}, created_at DESC` : 'created_at DESC';
 }
 
 export async function getActivity(filters: ActivityFilters = {}, limit = 300): Promise<AuditEntry[]> {
@@ -41,7 +52,7 @@ export async function getActivity(filters: ActivityFilters = {}, limit = 300): P
   const rows = await query(
     `SELECT id::text, entity_table, record_id, action, summary, changes, username, created_at::text
      FROM audit_log ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
-     ORDER BY created_at DESC LIMIT ${limit}`,
+     ORDER BY ${activityOrderBy(filters.sort)} LIMIT ${limit}`,
     params
   );
   return rows as AuditEntry[];

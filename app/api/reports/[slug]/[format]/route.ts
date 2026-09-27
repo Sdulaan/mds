@@ -6,6 +6,7 @@ import { getReport } from '@/lib/reports/definitions';
 import { parseReportParams } from '@/lib/reports/params';
 import { renderExcel } from '@/lib/reports/render-excel';
 import { renderPdf } from '@/lib/reports/render-pdf';
+import { sortReport } from '@/lib/reports/sort';
 
 const CONTENT_TYPES = {
   pdf: 'application/pdf',
@@ -22,7 +23,10 @@ export async function GET(request: NextRequest, ctx: RouteContext<'/api/reports/
   if (!def || (format !== 'pdf' && format !== 'excel')) return Response.json({ error: 'Not found' }, { status: 404 });
 
   const raw = request.nextUrl.searchParams;
-  const report = await def.build(parseReportParams(def, raw), raw);
+  const params = parseReportParams(def, raw);
+  const built = await def.build(params, raw);
+  // Register exports are already sorted in SQL (lib/data/cheques.ts); other reports sort here.
+  const report = def.group === 'Registers' ? built : sortReport(built, params.sort, params.dir);
   const name = user.fullName || user.username;
   const body = format === 'pdf' ? renderPdf(report, name) : await renderExcel(report, name);
 

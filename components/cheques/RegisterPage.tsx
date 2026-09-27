@@ -4,9 +4,10 @@ import { Plus } from 'lucide-react';
 import { canEdit, requireUser } from '@/lib/auth';
 import { getBankNames, getChequePage } from '@/lib/data/cheques';
 import { getEntityOptions } from '@/lib/data/entities';
-import { recentMonths } from '@/lib/dates';
-import { filtersToQuery, parseChequeFilters, pick } from '@/lib/filters';
+import { MONTHS_AHEAD, recentMonths } from '@/lib/dates';
+import { CHEQUE_SORT_KEYS, filtersToQuery, parseChequeFilters, pick } from '@/lib/filters';
 import { formatAmount } from '@/lib/format';
+import { sortHref, type Sort } from '@/lib/sort';
 import { btnPrimary, card } from '@/lib/ui';
 import PageHeader from '@/components/PageHeader';
 import Pagination from '@/components/Pagination';
@@ -24,7 +25,7 @@ const CONFIG: Record<TransactionType, { title: string; description: string; path
   },
   DEBIT: {
     title: 'Creditor Cheques',
-    description: 'Outstanding cheque register — cheques issued to creditors. Tick Cleared or Cancelled.',
+    description: 'Uncleared cheque register — cheques issued to creditors. Tick Cleared or Cancelled.',
     path: '/payables',
     slug: 'creditor-cheques',
   },
@@ -35,6 +36,10 @@ async function RegisterContent({ type, filters, page }: { type: TransactionType;
   const result = await getChequePage(filters, page);
   const cfg = CONFIG[type];
   const query = filtersToQuery(filters);
+  // Default order (no ?sort): newest cheque date first.
+  const sort: Sort = filters.sort ? { sort: filters.sort, dir: filters.dir ?? 'asc' } : { sort: 'cheque_date', dir: 'desc' };
+  const unsorted = filtersToQuery({ ...filters, sort: undefined });
+  const sortLinks = Object.fromEntries(CHEQUE_SORT_KEYS.map((k) => [k, sortHref(cfg.path, unsorted, sort, k)]));
 
   return (
     <>
@@ -54,6 +59,8 @@ async function RegisterContent({ type, filters, page }: { type: TransactionType;
         rows={result.rows}
         editableIds={result.rows.filter((r) => canEdit(user, r.created_by)).map((r) => r.id)}
         entityLabel={ENTITY_LABEL[ENTITY_TYPE_FOR[type]].one}
+        sort={sort}
+        sortLinks={sortLinks}
       />
       <Pagination page={result.page} pageCount={result.pageCount} baseQuery={query} pathname={cfg.path} />
     </>
@@ -91,7 +98,7 @@ export default async function RegisterPage({
           filters={filters}
           entities={entities}
           banks={banks}
-          months={recentMonths(24)}
+          months={recentMonths(24, MONTHS_AHEAD)}
           entityLabel={ENTITY_LABEL[entityType].one}
         />
       </div>

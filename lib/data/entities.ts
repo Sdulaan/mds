@@ -1,6 +1,7 @@
 import 'server-only';
 import { query } from '@/lib/db';
 import { requireUser } from '@/lib/auth';
+import { sqlOrder, type Sort } from '@/lib/sort';
 import type { Entity, EntityType } from '@/types';
 
 const ENTITY_COLUMNS = `
@@ -20,7 +21,12 @@ export interface EntityWithStats extends Entity {
   outstanding_amount: number;
 }
 
-export async function getEntities(type: EntityType, opts: { activeOnly?: boolean; q?: string } = {}): Promise<EntityWithStats[]> {
+export const ENTITY_SORT_KEYS = ['name', 'terms', 'cheques', 'outstanding', 'status'] as const;
+
+export async function getEntities(
+  type: EntityType,
+  opts: { activeOnly?: boolean; q?: string; sort?: Sort } = {}
+): Promise<EntityWithStats[]> {
   await requireUser();
   const params: unknown[] = [type];
   const conditions = ['e.type = $1'];
@@ -40,10 +46,25 @@ export async function getEntities(type: EntityType, opts: { activeOnly?: boolean
        FROM transactions GROUP BY entity_id
      ) s ON s.entity_id = e.id
      WHERE ${conditions.join(' AND ')}
-     ORDER BY e.is_active DESC, LOWER(e.name)`,
+     ORDER BY ${entityOrderBy(type, opts.sort)}`,
     params
   );
   return rows as EntityWithStats[];
+}
+
+/** Default: active first, then by name. */
+function entityOrderBy(type: EntityType, sort?: Sort): string {
+  const fallback = 'e.is_active DESC, LOWER(e.name)';
+  if (!sort?.sort) return fallback;
+  const columns: Record<string, string> = {
+    name: 'LOWER(e.name)',
+    terms: type === 'CUSTOMER' ? "LOWER(NULLIF(e.credit_terms, ''))" : 'e.opening_balance',
+    cheques: 'cheque_count',
+    outstanding: 'outstanding_amount',
+    status: 'e.is_active',
+  };
+  const column = columns[sort.sort];
+  return column ? `${sqlOrder(column, sort.dir)}, LOWER(e.name)` : fallback;
 }
 
 /** Lightweight list for dropdowns. */

@@ -1,7 +1,7 @@
 import 'server-only';
 import { query } from '@/lib/db';
-import { CHEQUE_COLUMNS, CHEQUE_JOINS, chequeWhere } from '@/lib/data/cheques';
-import { addMonths, currentMonthKey, formatDate, monthEnd, monthLabel } from '@/lib/dates';
+import { CHEQUE_COLUMNS, CHEQUE_JOINS, chequeOrderBy, chequeWhere } from '@/lib/data/cheques';
+import { addMonths, currentMonthKey, formatDate, monthEnd, monthLabel, todayKey } from '@/lib/dates';
 import { buildFilterLabel, parseChequeFilters } from '@/lib/filters';
 import { formatAmount } from '@/lib/format';
 import { STATUS_LABEL, type ChequeStatus, type TransactionType, type TransactionWithEntity } from '@/types';
@@ -65,21 +65,21 @@ const subtotal = (label: string, labelKey: string, amountKey: string, amount: nu
 });
 
 /**
- * One section per entity: its cheques, a subtotal after each month (by `monthOf`),
- * and an entity total. Used by the customer-/creditor-wise reports.
+ * One section per entity: its cheques, a subtotal after each month (of the `monthKey` date),
+ * and an entity total. Used by the "by customer" / "by creditor" reports.
  */
 function entitySections(
   rows: TransactionWithEntity[],
   columns: Column[],
   toCells: (c: TransactionWithEntity) => Row['cells'],
-  monthOf: ((c: TransactionWithEntity) => string | null) | null,
+  monthKey: 'cheque_date' | 'cleared_date' | null,
   labelKey = columns[0].key
 ): Section[] {
   const sections: Section[] = [];
   for (const [, list] of groupBy(rows, (r) => r.entity_id)) {
     const out: Row[] = [];
-    if (monthOf) {
-      for (const [month, monthRows] of groupBy(list, (r) => (monthOf(r) ?? '').slice(0, 7))) {
+    if (monthKey) {
+      for (const [month, monthRows] of groupBy(list, (r) => (r[monthKey] ?? '').slice(0, 7))) {
         out.push(...monthRows.map((r) => ({ cells: toCells(r) })));
         out.push(subtotal(`${month ? monthLabel(month) : 'No date'} total (${monthRows.length})`, labelKey, 'amount', sum(monthRows, (r) => r.amount)));
       }
@@ -87,7 +87,7 @@ function entitySections(
       out.push(...list.map((r) => ({ cells: toCells(r) })));
     }
     out.push({ kind: 'total', cells: { [labelKey]: `Total — ${plural(list.length, 'cheque')}`, amount: sum(list, (r) => r.amount) } });
-    sections.push({ title: list[0].entity_name + (list[0].entity_active ? '' : ' (inactive)'), columns, rows: out });
+    sections.push({ title: list[0].entity_name + (list[0].entity_active ? '' : ' (inactive)'), columns, rows: out, blockKey: monthKey ?? undefined });
   }
   return sections;
 }
@@ -133,10 +133,72 @@ async function monthlySummary(type: TransactionType, dateColumn: string, statusC
         { key: 'amount', label: labels[1], type: 'money' },
       ],
       rows: [
-        ...rows.map((r) => ({ cells: { month: monthLabel(r.month), count: r.count, amount: num(r.amount) } })),
+        ...rows.map((r) => ({ cells: { month: monthLabel(r.month), count: r.count, amount: num(r.amount) }, sortKeys: { month: r.month } })),
         { kind: 'total' as const, cells: { month: 'Total', count, amount: total } },
       ],
     }],
+  };
+}
+
+/** Longest date range a daily summary lists. */
+const MAX_DAILY_DAYS = 366;
+
+/**
+ * The period of a summary report: a whole month, or a from–to date range. Only one is ever
+ * used (see ReportParams.mode). Status and balances are taken as at `end`.
+ */
+function summaryPeriod(p: ReportParams): { start: string; end: string; label: string } {
+  const byDate = p.mode === 'date' || (!p.month && !!(p.from || p.to));
+  if (!byDate) {
+    const month = p.month ?? currentMonthKey();
+    return { start: `${month}-01`, end: monthEnd(month), label: monthLabel(month) };
+  }
+  const end = p.to ?? todayKey();
+  let start = p.from && p.from <= end ? p.from : `${end.slice(0, 7)}-01`;
+  const earliest = new Date(Date.parse(end) - (MAX_DAILY_DAYS - 1) * 86_400_000).toISOString().slice(0, 10);
+  if (start < earliest) start = earliest;
+  return { start, end, label: `${formatDate(start)} – ${formatDate(end)}` };
+}
+
+/**
+ * Every date of the period in order (0 on days without any), with the number and value of cheques
+ * dated that day that were still pending at the end of the period. One section per month.
+ */
+async function dailyPendingSummary(type: TransactionType, p: ReportParams, labels: [string, string]): Promise<Omit<ReportData, 'title'>> {
+  const { start, end, label } = summaryPeriod(p);
+  const params: unknown[] = [start, end];
+  const pending = type === 'CREDIT'
+    ? `(t.cleared_date IS NULL OR t.cleared_date > $2::date) AND (t.returned_date IS NULL OR t.returned_date > $2::date)`
+    : `(t.cleared_date IS NULL OR t.cleared_date > $2::date) AND (t.cancelled_date IS NULL OR t.cancelled_date > $2::date)`;
+  const extra = standardConditions({ entityId: p.entityId, bank: p.bank }, 't.cheque_date', params);
+  const rows = await query(
+    `SELECT d::date::text AS day, COUNT(t.id)::int AS count, COALESCE(SUM(t.amount), 0) AS amount
+     FROM generate_series($1::date, $2::date, INTERVAL '1 day') AS d
+     LEFT JOIN transactions t ON t.cheque_date = d::date AND t.transaction_type = '${type}' AND ${pending}
+       ${extra.length ? `AND ${extra.join(' AND ')}` : ''}
+     GROUP BY d ORDER BY d`,
+    params
+  );
+  const count = rows.reduce((s, r) => s + r.count, 0);
+  const total = sum(rows, (r) => r.amount);
+  const columns: Column[] = [{ key: 'day', label: 'Date', type: 'date' }, { key: 'count', label: 'Cheques', type: 'number' }, { key: 'amount', label: 'Amount (LKR)', type: 'money' }];
+  const sections: Section[] = [...groupBy(rows, (r) => String(r.day).slice(0, 7))].map(([month, list]) => ({
+    title: monthLabel(month),
+    month,
+    columns,
+    rows: [
+      ...list.map((r) => ({ cells: { day: r.day, count: r.count, amount: num(r.amount) } })),
+      { kind: 'total' as const, cells: { day: `${monthLabel(month)} total`, count: list.reduce((s, r) => s + r.count, 0), amount: sum(list, (r) => r.amount) } },
+    ],
+  }));
+  return {
+    subtitle: [label, await entityName(p.entityId), p.bank].filter(Boolean).join(' · '),
+    summary: [
+      { label: labels[0], value: count.toLocaleString() },
+      { label: labels[1], value: formatAmount(total) },
+      { label: 'Days with cheques', value: rows.filter((r) => r.count > 0).length.toLocaleString() },
+    ],
+    sections,
   };
 }
 
@@ -168,32 +230,67 @@ const cells = (c: TransactionWithEntity, extra: Record<string, string | number |
 
 const PENDING_RECEIVABLE = `t.status IN ('IN_HAND', 'DEPOSITED')`;
 
+/**
+ * Creditor cheques that were still pending at the end of the report period (the "to" date):
+ * issued by then and not cleared or cancelled by then. A cheque issued in March and cleared in
+ * September is therefore outstanding in a March report, whenever that report is run.
+ * Without a "to" date this is simply the current status.
+ */
+function pendingPayableAsOf(p: ReportParams, params: unknown[]): string {
+  if (!p.to) return `t.status = 'PENDING'`;
+  params.push(p.to);
+  const d = `$${params.length}::date`;
+  return `(t.cheque_date <= ${d} AND (t.cleared_date IS NULL OR t.cleared_date > ${d}) AND (t.cancelled_date IS NULL OR t.cancelled_date > ${d}))`;
+}
+
+/**
+ * Customer cheques still in hand or deposited at the report's "to" date: not credited or returned
+ * by then. A cheque received in March and credited in September stays pending in a March report.
+ * Without a "to" date this is simply the current status.
+ */
+function pendingReceivableAsOf(p: ReportParams, params: unknown[]): string {
+  if (!p.to) return PENDING_RECEIVABLE;
+  params.push(p.to);
+  const d = `$${params.length}::date`;
+  return `((t.cleared_date IS NULL OR t.cleared_date > ${d}) AND (t.returned_date IS NULL OR t.returned_date > ${d}))`;
+}
+
+/** In hand or deposited, as it stood on `date` (today when no date). */
+const receivableStatusAt = (c: TransactionWithEntity, date?: string): ChequeStatus =>
+  !date ? c.status : c.deposited_date && c.deposited_date <= date ? 'DEPOSITED' : 'IN_HAND';
+
+/** Still pending at the end of the cheque's own month (for the month-by-month uncleared summary). */
+const MONTH_END = `(date_trunc('month', t.cheque_date) + INTERVAL '1 month' - INTERVAL '1 day')::date`;
+const PENDING_AT_CHEQUE_MONTH_END =
+  `(t.cleared_date IS NULL OR t.cleared_date > ${MONTH_END}) AND (t.cancelled_date IS NULL OR t.cancelled_date > ${MONTH_END})`;
+
 export const REPORTS: ReportDefinition[] = [
   // ── Receivables (SRS 1: Cheque Management System) ──────────────────────────
   {
     slug: 'cheques-in-hand',
-    title: 'Pending Cheques in Hand — Customer-wise',
+    title: 'Cheques in Hand by Customer',
     group: 'Receivables',
-    description: 'Outstanding customer cheques (in hand or deposited, not yet credited) per customer, with cheque dates, numbers and monthly totals.',
+    description: 'Customer cheques not credited or returned by the end of the selected period (or today), grouped by customer with cheque dates, numbers and monthly totals.',
     params: ['entity', 'dateRange', 'bank'],
     entityType: 'CUSTOMER',
     dateLabel: 'Cheque date',
     async build(p) {
       const params: unknown[] = [];
-      const rows = await fetchCheques('CREDIT', [PENDING_RECEIVABLE, ...standardConditions(p, 't.cheque_date', params)], params, 'LOWER(e.name), t.cheque_date, t.cheque_number');
+      const conditions = standardConditions(p, 't.cheque_date', params);
+      const rows = await fetchCheques('CREDIT', [pendingReceivableAsOf(p, params), ...conditions], params, 'LOWER(e.name), t.cheque_date, t.cheque_number');
       return {
         title: this.title,
         subtitle: await describe(p),
         summary: totalsSummary(rows, 'Pending cheques', 'Pending amount', 'Customers'),
-        sections: entitySections(rows, [C.chequeDate, C.chequeNo, C.bank, C.status, C.amount], (c) => cells(c), (c) => c.cheque_date),
+        sections: entitySections(rows, [C.chequeDate, C.chequeNo, C.bank, C.status, C.amount], (c) => cells(c, { status: receivableStatusAt(c, p.to) }), 'cheque_date'),
       };
     },
   },
   {
     slug: 'credited-cheques',
-    title: 'Credited Cheques — Customer-wise',
+    title: 'Credited Cheques by Customer',
     group: 'Receivables',
-    description: 'Customer cheques successfully credited to the bank, per customer, with cheque dates, numbers and monthly totals.',
+    description: 'Customer cheques credited to the bank, grouped by customer with cheque dates, numbers and monthly totals.',
     params: ['dateRange', 'entity', 'bank'],
     entityType: 'CUSTOMER',
     dateLabel: 'Credited date',
@@ -209,16 +306,16 @@ export const REPORTS: ReportDefinition[] = [
           rows,
           [C.chequeDate, C.chequeNo, C.bank, { key: 'cleared_date', label: 'Credited Date', type: 'date' }, C.amount],
           (c) => cells(c, { cleared_date: c.cleared_date }),
-          (c) => c.cleared_date
+          'cleared_date'
         ),
       };
     },
   },
   {
     slug: 'returned-cheques',
-    title: 'Monthly Customer-wise Returned Cheques',
+    title: 'Returned Cheques by Month',
     group: 'Receivables',
-    description: 'Bounced / returned customer cheques grouped by month and customer.',
+    description: 'Bounced or returned customer cheques for each month, subtotalled by customer.',
     params: ['dateRange', 'entity'],
     entityType: 'CUSTOMER',
     dateLabel: 'Returned date',
@@ -231,26 +328,27 @@ export const REPORTS: ReportDefinition[] = [
       for (const [month, list] of groupBy(rows, (r) => (r.returned_date ?? '').slice(0, 7))) {
         const out: Row[] = [];
         for (const [, custRows] of groupBy(list, (r) => r.entity_id)) {
-          out.push(...custRows.map((c) => ({ cells: cells(c, { returned_date: c.returned_date }) })));
+          out.push(...custRows.map((c) => ({ cells: cells(c, { returned_date: c.returned_date }), group: c.entity_id })));
           if (custRows.length > 1) out.push(subtotal(`${custRows[0].entity_name} (${custRows.length})`, 'entity_name', 'amount', sum(custRows, (r) => r.amount)));
         }
         out.push({ kind: 'total', cells: { entity_name: `Total — ${plural(list.length, 'cheque')}`, amount: sum(list, (r) => r.amount) } });
-        sections.push({ title: monthLabel(month), columns, rows: out });
+        sections.push({ title: monthLabel(month), columns, rows: out, blockKey: 'entity_name', month });
       }
       return { title: this.title, subtitle: await describe(p), summary: totalsSummary(rows, 'Returned cheques', 'Returned amount', 'Customers'), sections };
     },
   },
   {
     slug: 'in-hand-summary',
-    title: 'Month-wise Cheques in Hand Summary',
+    title: 'Cheques in Hand by Date',
     group: 'Receivables',
-    description: 'Pending customer cheques by cheque date, with daily and monthly totals.',
+    description: 'Customer cheques not credited or returned by the end of the selected period (or today), totalled by cheque date and by month.',
     params: ['dateRange', 'entity'],
     entityType: 'CUSTOMER',
     dateLabel: 'Cheque date',
     async build(p) {
       const params: unknown[] = [];
-      const conditions = [PENDING_RECEIVABLE, ...standardConditions(p, 't.cheque_date', params)];
+      const range = standardConditions(p, 't.cheque_date', params);
+      const conditions = [pendingReceivableAsOf(p, params), ...range];
       const rows = await query(
         `SELECT t.cheque_date::text AS day, COUNT(*)::int AS count, SUM(t.amount) AS amount
          FROM transactions t WHERE t.transaction_type = 'CREDIT' AND ${conditions.join(' AND ')}
@@ -262,6 +360,7 @@ export const REPORTS: ReportDefinition[] = [
       for (const [month, list] of groupBy(rows, (r) => String(r.day).slice(0, 7))) {
         sections.push({
           title: monthLabel(month),
+          month,
           columns,
           rows: [
             ...list.map((r) => ({ cells: { day: r.day, count: r.count, amount: num(r.amount) } })),
@@ -280,9 +379,9 @@ export const REPORTS: ReportDefinition[] = [
   },
   {
     slug: 'monthly-received',
-    title: 'Monthly Cheques Received',
+    title: 'Cheques Received by Month',
     group: 'Receivables',
-    description: 'Number and value of customer cheques by cheque month, with credited, returned and pending amounts.',
+    description: 'Number and value of customer cheques for each month, with the amounts credited, returned and still pending at the end of that month.',
     params: ['dateRange', 'entity'],
     entityType: 'CUSTOMER',
     dateLabel: 'Cheque date',
@@ -292,9 +391,9 @@ export const REPORTS: ReportDefinition[] = [
       const conditions = standardConditions(p, 't.cheque_date', params);
       const rows = await query(
         `SELECT TO_CHAR(t.cheque_date, 'YYYY-MM') AS month, COUNT(*)::int AS count, SUM(t.amount) AS amount,
-                COALESCE(SUM(t.amount) FILTER (WHERE t.status = 'CREDITED'), 0) AS credited,
-                COALESCE(SUM(t.amount) FILTER (WHERE t.status = 'RETURNED'), 0) AS returned,
-                COALESCE(SUM(t.amount) FILTER (WHERE t.status IN ('IN_HAND', 'DEPOSITED')), 0) AS pending
+                COALESCE(SUM(t.amount) FILTER (WHERE t.cleared_date <= ${MONTH_END} AND (t.returned_date IS NULL OR t.returned_date > ${MONTH_END})), 0) AS credited,
+                COALESCE(SUM(t.amount) FILTER (WHERE t.returned_date <= ${MONTH_END}), 0) AS returned,
+                COALESCE(SUM(t.amount) FILTER (WHERE (t.cleared_date IS NULL OR t.cleared_date > ${MONTH_END}) AND (t.returned_date IS NULL OR t.returned_date > ${MONTH_END})), 0) AS pending
          FROM transactions t WHERE t.transaction_type = 'CREDIT' ${conditions.length ? `AND ${conditions.join(' AND ')}` : ''}
          GROUP BY 1 ORDER BY 1`,
         params
@@ -312,7 +411,7 @@ export const REPORTS: ReportDefinition[] = [
             { key: 'credited', label: 'Credited', type: 'money' }, { key: 'returned', label: 'Returned', type: 'money' }, { key: 'pending', label: 'Pending', type: 'money' },
           ],
           rows: [
-            ...rows.map((r) => ({ cells: { month: monthLabel(r.month), count: r.count, ...Object.fromEntries(k.map((key) => [key, num(r[key])])) } })),
+            ...rows.map((r) => ({ cells: { month: monthLabel(r.month), count: r.count, ...Object.fromEntries(k.map((key) => [key, num(r[key])])) }, sortKeys: { month: r.month } })),
             { kind: 'total' as const, cells: { month: 'Total', count, ...totals } },
           ],
         }],
@@ -323,23 +422,25 @@ export const REPORTS: ReportDefinition[] = [
   // ── Payables (SRS 2: Creditors Outstanding Cheques & Monthly Payables) ─────
   {
     slug: 'creditor-outstanding',
-    title: 'Creditor-wise Outstanding Cheques',
+    title: 'Uncleared Cheques',
     group: 'Payables',
-    description: 'All pending (uncleared) cheques issued to creditors, with GRN numbers and status. (SRS 5.1)',
+    description: 'Full list of cheques issued to creditors that were not cleared by the end of the selected period (or today), with GRN numbers.',
     params: ['entity', 'dateRange', 'bank'],
     entityType: 'VENDOR',
     dateLabel: 'Cheque date',
     async build(p) {
       const params: unknown[] = [];
-      const rows = await fetchCheques('DEBIT', [`t.status = 'PENDING'`, ...standardConditions(p, 't.cheque_date', params)], params, 'LOWER(e.name), t.cheque_date, t.cheque_number');
+      const conditions = standardConditions(p, 't.cheque_date', params);
+      const rows = await fetchCheques('DEBIT', [pendingPayableAsOf(p, params), ...conditions], params, 'LOWER(e.name), t.cheque_date, t.cheque_number');
       return {
         title: this.title,
         subtitle: await describe(p),
-        summary: totalsSummary(rows, 'Total outstanding cheques', 'Total outstanding amount'),
+        summary: totalsSummary(rows, 'Total uncleared cheques', 'Total uncleared amount'),
         sections: [{
           columns: [C.creditor, C.grn, C.chequeNo, C.chequeDate, C.amount, C.status],
           rows: [
-            ...rows.map((c) => ({ cells: cells(c) })),
+            // Every row was pending at the report date, even if it has cleared since.
+            ...rows.map((c) => ({ cells: cells(c, { status: 'PENDING' }) })),
             { kind: 'total', cells: { entity_name: `Total — ${plural(rows.length, 'cheque')}`, amount: sum(rows, (r) => r.amount) } },
           ],
         }],
@@ -348,20 +449,21 @@ export const REPORTS: ReportDefinition[] = [
   },
   {
     slug: 'creditor-uncleared',
-    title: 'Creditor-wise Uncleared Cheques',
+    title: 'Uncleared Cheques by Creditor',
     group: 'Payables',
-    description: 'Uncleared cheques grouped by creditor, with the number and outstanding amount per creditor. (SRS 5.2)',
+    description: 'Cheques not cleared by the end of the selected period (or today), grouped by creditor, with the number and amount of uncleared cheques for each.',
     params: ['entity', 'dateRange', 'bank'],
     entityType: 'VENDOR',
     dateLabel: 'Cheque date',
     async build(p) {
       const params: unknown[] = [];
-      const rows = await fetchCheques('DEBIT', [`t.status = 'PENDING'`, ...standardConditions(p, 't.cheque_date', params)], params, 'LOWER(e.name), t.cheque_date, t.cheque_number');
+      const conditions = standardConditions(p, 't.cheque_date', params);
+      const rows = await fetchCheques('DEBIT', [pendingPayableAsOf(p, params), ...conditions], params, 'LOWER(e.name), t.cheque_date, t.cheque_number');
       const detail = entitySections(rows, [C.grn, C.chequeNo, C.chequeDate, C.bank, C.amount], (c) => cells(c), null, 'grn_number');
       const byCreditor = [...groupBy(rows, (r) => r.entity_id).values()];
       const summarySection: Section = {
-        title: 'Creditor-wise payable summary',
-        columns: [C.creditor, { key: 'count', label: 'Uncleared Cheques', type: 'number' }, { key: 'amount', label: 'Outstanding (LKR)', type: 'money' }],
+        title: 'Summary by creditor',
+        columns: [C.creditor, { key: 'count', label: 'Uncleared Cheques', type: 'number' }, { key: 'amount', label: 'Uncleared (LKR)', type: 'money' }],
         rows: [
           ...byCreditor.map((list) => ({ cells: { entity_name: list[0].entity_name, count: list.length, amount: sum(list, (r) => r.amount) } })),
           { kind: 'total', cells: { entity_name: 'Total', count: rows.length, amount: sum(rows, (r) => r.amount) } },
@@ -370,16 +472,16 @@ export const REPORTS: ReportDefinition[] = [
       return {
         title: this.title,
         subtitle: await describe(p),
-        summary: totalsSummary(rows, 'Uncleared cheques', 'Total outstanding', 'Creditors'),
+        summary: totalsSummary(rows, 'Uncleared cheques', 'Total uncleared', 'Creditors'),
         sections: [summarySection, ...detail],
       };
     },
   },
   {
     slug: 'creditor-cleared',
-    title: 'Creditor-wise Cleared Cheques',
+    title: 'Cleared Cheques by Creditor',
     group: 'Payables',
-    description: 'Cheques cleared by the bank, per creditor, with cleared dates and a monthly summary. (SRS 5.3)',
+    description: 'Cheques cleared by the bank, grouped by creditor with cleared dates and a monthly summary.',
     params: ['dateRange', 'entity', 'bank'],
     entityType: 'VENDOR',
     dateLabel: 'Cleared date',
@@ -399,7 +501,7 @@ export const REPORTS: ReportDefinition[] = [
         title: 'Monthly summary',
         columns: [{ key: 'month', label: 'Month' }, { key: 'count', label: 'Cleared Cheques', type: 'number' }, { key: 'amount', label: 'Cleared Amount', type: 'money' }],
         rows: [
-          ...months.map(([m, list]) => ({ cells: { month: monthLabel(m), count: list.length, amount: sum(list, (r) => r.amount) } })),
+          ...months.map(([m, list]) => ({ cells: { month: monthLabel(m), count: list.length, amount: sum(list, (r) => r.amount) }, sortKeys: { month: m } })),
           { kind: 'total', cells: { month: 'Total', count: rows.length, amount: sum(rows, (r) => r.amount) } },
         ],
       };
@@ -415,7 +517,7 @@ export const REPORTS: ReportDefinition[] = [
     slug: 'cancelled-cheques',
     title: 'Cancelled Cheques',
     group: 'Payables',
-    description: 'Cheques cancelled after issue, with cancellation dates. (SRS 5.4)',
+    description: 'Cheques cancelled after issue, with cancellation dates.',
     params: ['dateRange', 'entity', 'bank'],
     entityType: 'VENDOR',
     dateLabel: 'Cancellation date',
@@ -439,9 +541,9 @@ export const REPORTS: ReportDefinition[] = [
   },
   {
     slug: 'creditor-payables',
-    title: 'Monthly Creditor Payables',
+    title: 'Creditor Payables',
     group: 'Payables',
-    description: 'Opening balance, purchases (GRNs), payments (cheques issued) and outstanding balance per creditor — monthly, quarterly or annual. (SRS 5.5)',
+    description: 'Opening balance, purchases (GRNs), payments (cheques cleared) and outstanding balance for each creditor, for a month, quarter or year, plus cheques issued but not yet cleared.',
     params: ['period', 'month', 'entity'],
     entityType: 'VENDOR',
     defaults: () => ({ period: 'month', month: currentMonthKey() }),
@@ -456,31 +558,38 @@ export const REPORTS: ReportDefinition[] = [
 
       const params: unknown[] = [start, end];
       const entityCond = p.entityId ? (params.push(p.entityId), `AND e.id = $3`) : '';
-      // Payments = cheques issued in the period (cancelled cheques excluded).
+      // Payments = cheques cleared in the period: a cheque is only paid once the bank clears it, so a
+      // cheque that stays uncleared and is later cancelled never counts, and past periods never change.
+      // Uncleared = cheques issued by the period end and not cleared or cancelled by then (for information).
       const rows = await query(
         `SELECT e.name, e.is_active,
            e.opening_balance
              + COALESCE((SELECT SUM(amount) FROM purchases p WHERE p.entity_id = e.id AND p.purchase_date < $1), 0)
-             - COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.entity_id = e.id AND t.transaction_type = 'DEBIT' AND t.status <> 'CANCELLED' AND t.cheque_date < $1), 0) AS opening,
+             - COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.entity_id = e.id AND t.transaction_type = 'DEBIT' AND t.cleared_date < $1), 0) AS opening,
            COALESCE((SELECT SUM(amount) FROM purchases p WHERE p.entity_id = e.id AND p.purchase_date BETWEEN $1 AND $2), 0) AS purchases,
-           COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.entity_id = e.id AND t.transaction_type = 'DEBIT' AND t.status <> 'CANCELLED' AND t.cheque_date BETWEEN $1 AND $2), 0) AS payments
+           COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.entity_id = e.id AND t.transaction_type = 'DEBIT' AND t.cleared_date BETWEEN $1 AND $2), 0) AS payments,
+           COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.entity_id = e.id AND t.transaction_type = 'DEBIT' AND t.cheque_date <= $2
+                       AND (t.cleared_date IS NULL OR t.cleared_date > $2) AND (t.cancelled_date IS NULL OR t.cancelled_date > $2)), 0) AS uncleared
          FROM entities e WHERE e.type = 'VENDOR' ${entityCond}
          ORDER BY LOWER(e.name)`,
         params
       );
       const data = rows
-        .map((r) => ({ name: r.name + (r.is_active ? '' : ' (inactive)'), opening: num(r.opening), purchases: num(r.purchases), payments: num(r.payments) }))
+        .map((r) => ({ name: r.name + (r.is_active ? '' : ' (inactive)'), opening: num(r.opening), purchases: num(r.purchases), payments: num(r.payments), uncleared: num(r.uncleared) }))
         .map((r) => ({ ...r, outstanding: r.opening + r.purchases - r.payments }))
-        .filter((r) => r.opening || r.purchases || r.payments);
-      const t = { opening: sum(data, (r) => r.opening), purchases: sum(data, (r) => r.purchases), payments: sum(data, (r) => r.payments), outstanding: sum(data, (r) => r.outstanding) };
+        .filter((r) => r.opening || r.purchases || r.payments || r.uncleared);
+      const t = {
+        opening: sum(data, (r) => r.opening), purchases: sum(data, (r) => r.purchases), payments: sum(data, (r) => r.payments),
+        outstanding: sum(data, (r) => r.outstanding), uncleared: sum(data, (r) => r.uncleared),
+      };
       const periodLabel = period === 'month' ? monthLabel(startMonth) : `${monthLabel(startMonth, 'short')} – ${monthLabel(endMonth, 'short')}`;
       return {
-        title: `${period === 'year' ? 'Annual' : period === 'quarter' ? 'Quarterly' : 'Monthly'} Creditor Payables`,
-        subtitle: [periodLabel, await entityName(p.entityId)].filter(Boolean).join(' · '),
+        title: this.title,
+        subtitle: [`${period === 'year' ? 'Annual' : period === 'quarter' ? 'Quarterly' : 'Monthly'}: ${periodLabel}`, await entityName(p.entityId)].filter(Boolean).join(' · '),
         summary: [
           { label: 'Opening balance', value: formatAmount(t.opening) },
           { label: 'Purchases', value: formatAmount(t.purchases) },
-          { label: 'Payments made', value: formatAmount(t.payments) },
+          { label: 'Payments made (cleared)', value: formatAmount(t.payments) },
           { label: 'Outstanding balance', value: formatAmount(t.outstanding) },
         ],
         sections: [{
@@ -488,8 +597,9 @@ export const REPORTS: ReportDefinition[] = [
             { key: 'name', label: 'Creditor' },
             { key: 'opening', label: 'Opening Balance', type: 'money' },
             { key: 'purchases', label: 'Purchases', type: 'money' },
-            { key: 'payments', label: 'Payments Made', type: 'money' },
+            { key: 'payments', label: 'Payments Made (Cleared)', type: 'money' },
             { key: 'outstanding', label: 'Outstanding Balance', type: 'money' },
+            { key: 'uncleared', label: 'Uncleared Cheques', type: 'money' },
           ],
           rows: [...data.map((r) => ({ cells: r })), { kind: 'total', cells: { name: 'Total', ...t } }],
         }],
@@ -498,22 +608,22 @@ export const REPORTS: ReportDefinition[] = [
   },
   {
     slug: 'monthly-outstanding',
-    title: 'Monthly Outstanding Cheque Summary',
+    title: 'Uncleared Cheques by Month',
     group: 'Payables',
-    description: 'Pending creditor cheques by cheque month. (SRS 5.6)',
+    description: 'Number and value of creditor cheques issued in each month that were still uncleared at the end of that month.',
     params: ['dateRange', 'entity', 'bank'],
     entityType: 'VENDOR',
     dateLabel: 'Cheque date',
     async build(p) {
-      const r = await monthlySummary('DEBIT', 't.cheque_date', `t.status = 'PENDING'`, p, ['Outstanding Cheques', 'Outstanding Amount']);
+      const r = await monthlySummary('DEBIT', 't.cheque_date', PENDING_AT_CHEQUE_MONTH_END, p, ['Uncleared Cheques', 'Uncleared Amount']);
       return { ...r, title: this.title };
     },
   },
   {
     slug: 'monthly-cleared',
-    title: 'Monthly Cleared Cheque Summary',
+    title: 'Cleared Cheques by Month',
     group: 'Payables',
-    description: 'Creditor cheques cleared each month. (SRS 5.7)',
+    description: 'Number and value of creditor cheques cleared in each month.',
     params: ['dateRange', 'entity', 'bank'],
     entityType: 'VENDOR',
     dateLabel: 'Cleared date',
@@ -525,9 +635,9 @@ export const REPORTS: ReportDefinition[] = [
   },
   {
     slug: 'monthly-cancelled',
-    title: 'Monthly Cancelled Cheque Summary',
+    title: 'Cancelled Cheques by Month',
     group: 'Payables',
-    description: 'Creditor cheques cancelled each month. (SRS 5.8)',
+    description: 'Number and value of creditor cheques cancelled in each month.',
     params: ['dateRange', 'entity', 'bank'],
     entityType: 'VENDOR',
     dateLabel: 'Cancellation date',
@@ -537,77 +647,223 @@ export const REPORTS: ReportDefinition[] = [
       return { ...r, title: this.title };
     },
   },
-  {
-    slug: 'bank-reconciliation',
-    title: 'Bank Reconciliation',
-    group: 'Payables',
-    description: 'Issued, cleared and outstanding creditor cheques per bank for a month, for reconciling against the bank statement. (SRS 13)',
-    params: ['month', 'bank'],
-    defaults: () => ({ month: currentMonthKey() }),
-    async build(p) {
-      const month = p.month ?? currentMonthKey();
-      const start = `${month}-01`;
-      const end = monthEnd(month);
-      const params: unknown[] = [start, end];
-      const bankCond = p.bank ? (params.push(p.bank), `AND t.bank_name ILIKE $3`) : '';
-      // Outstanding at month end = issued on/before the end and neither cleared nor cancelled by then.
-      const rows = await query(
-        `SELECT ${CHEQUE_COLUMNS},
-           (t.cheque_date BETWEEN $1 AND $2 AND (t.cancelled_date IS NULL OR t.cancelled_date > $2)) AS issued,
-           (t.cleared_date BETWEEN $1 AND $2) AS cleared,
-           (t.cheque_date <= $2 AND (t.cleared_date IS NULL OR t.cleared_date > $2) AND (t.cancelled_date IS NULL OR t.cancelled_date > $2)) AS outstanding
-         ${CHEQUE_JOINS}
-         WHERE t.transaction_type = 'DEBIT' ${bankCond}
-           AND (t.cheque_date BETWEEN $1 AND $2 OR t.cleared_date BETWEEN $1 AND $2
-                OR (t.cheque_date <= $2 AND (t.cleared_date IS NULL OR t.cleared_date > $2) AND (t.cancelled_date IS NULL OR t.cancelled_date > $2)))
-         ORDER BY COALESCE(t.bank_name, ''), t.cheque_date, t.cheque_number`,
-        params
-      );
-      const list = rows as (TransactionWithEntity & { issued: boolean; cleared: boolean; outstanding: boolean })[];
-      const banks = [...groupBy(list, (r) => r.bank_name || 'No bank recorded').entries()];
-      const agg = (rs: typeof list, key: 'issued' | 'cleared' | 'outstanding') => {
-        const f = rs.filter((r) => r[key]);
-        return { count: f.length, amount: sum(f, (r) => r.amount) };
-      };
-      const summaryRows: Row[] = banks.map(([bank, rs]) => {
-        const i = agg(rs, 'issued'), c = agg(rs, 'cleared'), o = agg(rs, 'outstanding');
-        return { cells: { bank, issued_count: i.count, issued: i.amount, cleared_count: c.count, cleared: c.amount, outstanding_count: o.count, outstanding: o.amount } };
-      });
-      const all = { i: agg(list, 'issued'), c: agg(list, 'cleared'), o: agg(list, 'outstanding') };
-      summaryRows.push({ kind: 'total', cells: { bank: 'Total', issued_count: all.i.count, issued: all.i.amount, cleared_count: all.c.count, cleared: all.c.amount, outstanding_count: all.o.count, outstanding: all.o.amount } });
 
-      const detail = (key: 'cleared' | 'outstanding', title: string, extra?: Column): Section => {
-        const rs = list.filter((r) => r[key]);
-        return {
-          title,
-          columns: [C.bank, C.creditor, C.grn, C.chequeNo, C.chequeDate, ...(extra ? [extra] : []), C.amount],
-          rows: [
-            ...rs.map((c) => ({ cells: cells(c, { bank_name: c.bank_name || '—', cleared_date: c.cleared_date }) })),
-            { kind: 'total' as const, cells: { bank_name: `Total — ${plural(rs.length, 'cheque')}`, amount: sum(rs, (r) => r.amount) } },
+  // ── Summary reports (Month ⇄ Date switch) ───────────────────────────────────
+  {
+    slug: 'in-hand-daily',
+    title: 'Cheques in Hand — Daily Summary',
+    group: 'Summary',
+    description: 'Every date of the chosen month or date range in order, with the number and value of customer cheques still in hand or deposited at the end of the period (0 on days with none).',
+    params: ['monthOrRange', 'entity'],
+    entityType: 'CUSTOMER',
+    defaults: () => ({ mode: 'month', month: currentMonthKey() }),
+    async build(p) {
+      return { title: this.title, ...(await dailyPendingSummary('CREDIT', p, ['Cheques in hand', 'Amount in hand'])) };
+    },
+  },
+  {
+    slug: 'uncleared-daily',
+    title: 'Uncleared Cheques — Daily Summary',
+    group: 'Summary',
+    description: 'Every date of the chosen month or date range in order, with the number and value of creditor cheques still uncleared at the end of the period (0 on days with none).',
+    params: ['monthOrRange', 'entity', 'bank'],
+    entityType: 'VENDOR',
+    defaults: () => ({ mode: 'month', month: currentMonthKey() }),
+    async build(p) {
+      return { title: this.title, ...(await dailyPendingSummary('DEBIT', p, ['Uncleared cheques', 'Uncleared amount'])) };
+    },
+  },
+  {
+    slug: 'payables-summary',
+    title: 'Creditor Payables Summary',
+    group: 'Summary',
+    description: 'Each creditor with their balance at the start of the chosen month or date range, purchases and cleared cheques in the period, and the outstanding balance at the end (opening balance + purchases − cleared cheques), with totals.',
+    params: ['monthOrRange'],
+    defaults: () => ({ mode: 'month', month: currentMonthKey() }),
+    async build(p) {
+      const byDate = p.mode === 'date' || (!p.month && !!(p.from || p.to));
+      const month = p.month ?? currentMonthKey();
+      const end = byDate ? (p.to ?? todayKey()) : monthEnd(month);
+      const start = byDate ? (p.from && p.from <= end ? p.from : `${end.slice(0, 7)}-01`) : `${month}-01`;
+      // Closing balance matches the Outstanding Balance column of Creditor Payables.
+      const rows = await query(
+        `SELECT e.name, e.is_active, e.opening_balance
+             + COALESCE((SELECT SUM(amount) FROM purchases p WHERE p.entity_id = e.id AND p.purchase_date < $1), 0)
+             - COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.entity_id = e.id AND t.transaction_type = 'DEBIT' AND t.cleared_date < $1), 0) AS opening,
+           COALESCE((SELECT SUM(amount) FROM purchases p WHERE p.entity_id = e.id AND p.purchase_date BETWEEN $1 AND $2), 0) AS purchases,
+           COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.entity_id = e.id AND t.transaction_type = 'DEBIT' AND t.cleared_date BETWEEN $1 AND $2), 0) AS paid
+         FROM entities e WHERE e.type = 'VENDOR'
+         ORDER BY LOWER(e.name)`,
+        [start, end]
+      );
+      const data = rows
+        .map((r) => {
+          const opening = num(r.opening), purchases = num(r.purchases), paid = num(r.paid);
+          return { name: r.name + (r.is_active ? '' : ' (inactive)'), opening, purchases, paid, outstanding: opening + purchases - paid };
+        })
+        .filter((r) => r.opening || r.purchases || r.paid || r.outstanding);
+      const total = sum(data, (r) => r.outstanding);
+      return {
+        title: this.title,
+        subtitle: byDate ? `${formatDate(start)} – ${formatDate(end)}` : monthLabel(month),
+        summary: [
+          { label: 'Creditors', value: data.length.toLocaleString() },
+          { label: 'Purchases', value: formatAmount(sum(data, (r) => r.purchases)) },
+          { label: 'Cleared cheques', value: formatAmount(sum(data, (r) => r.paid)) },
+          { label: 'Total outstanding', value: formatAmount(total) },
+        ],
+        sections: [{
+          columns: [
+            { key: 'name', label: 'Creditor' },
+            { key: 'opening', label: 'Opening Balance', type: 'money' },
+            { key: 'purchases', label: 'Purchases', type: 'money' },
+            { key: 'paid', label: 'Cleared Cheques', type: 'money' },
+            { key: 'outstanding', label: 'Outstanding Balance', type: 'money' },
           ],
-        };
+          rows: [
+            ...data.map((r) => ({ cells: r })),
+            {
+              kind: 'total',
+              cells: {
+                name: 'Total',
+                opening: sum(data, (r) => r.opening),
+                purchases: sum(data, (r) => r.purchases),
+                paid: sum(data, (r) => r.paid),
+                outstanding: total,
+              },
+            },
+          ],
+        }],
+      };
+    },
+  },
+  {
+    slug: 'bank-reconciliation-statement',
+    title: 'Bank Reconciliation Statement',
+    group: 'Summary',
+    description: 'Reconciles the cash book with the bank statement at the end of the period: creditor cheques issued but not yet cleared, customer cheques deposited but not yet credited, and the cheques credited, returned, cleared and cancelled in the period, with the returned and cancelled cheques listed.',
+    params: ['monthOrRange', 'bookBalance'],
+    defaults: () => ({ mode: 'month', month: currentMonthKey() }),
+    async build(p) {
+      const { start, end, label } = summaryPeriod(p);
+      // As at the period end: customer cheques banked but not credited (deposits in transit),
+      // and creditor cheques issued but not presented / cleared (unpresented cheques).
+      const inTransit = `t.transaction_type = 'CREDIT' AND t.deposited_date <= $1
+        AND (t.cleared_date IS NULL OR t.cleared_date > $1) AND (t.returned_date IS NULL OR t.returned_date > $1)`;
+      const unpresented = `t.transaction_type = 'DEBIT' AND t.cheque_date <= $1
+        AND (t.cleared_date IS NULL OR t.cleared_date > $1) AND (t.cancelled_date IS NULL OR t.cancelled_date > $1)`;
+      const [open, [activity], reversed] = await Promise.all([
+        query(
+          `SELECT ${CHEQUE_COLUMNS} ${CHEQUE_JOINS}
+           WHERE (${inTransit}) OR (${unpresented})
+           ORDER BY LOWER(e.name), t.cheque_date, t.cheque_number`,
+          [end]
+        ) as Promise<TransactionWithEntity[]>,
+        query(
+          `SELECT
+             COUNT(*) FILTER (WHERE transaction_type = 'CREDIT' AND deposited_date BETWEEN $1 AND $2)::int AS deposited_n,
+             COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'CREDIT' AND deposited_date BETWEEN $1 AND $2), 0) AS deposited,
+             COUNT(*) FILTER (WHERE transaction_type = 'CREDIT' AND cleared_date BETWEEN $1 AND $2)::int AS credited_n,
+             COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'CREDIT' AND cleared_date BETWEEN $1 AND $2), 0) AS credited,
+             COUNT(*) FILTER (WHERE transaction_type = 'CREDIT' AND returned_date BETWEEN $1 AND $2)::int AS returned_n,
+             COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'CREDIT' AND returned_date BETWEEN $1 AND $2), 0) AS returned,
+             COUNT(*) FILTER (WHERE transaction_type = 'DEBIT' AND cleared_date BETWEEN $1 AND $2)::int AS cleared_n,
+             COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'DEBIT' AND cleared_date BETWEEN $1 AND $2), 0) AS cleared,
+             COUNT(*) FILTER (WHERE transaction_type = 'DEBIT' AND cancelled_date BETWEEN $1 AND $2)::int AS cancelled_n,
+             COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'DEBIT' AND cancelled_date BETWEEN $1 AND $2), 0) AS cancelled
+           FROM transactions`,
+          [start, end]
+        ),
+        // Customer cheques returned and creditor cheques cancelled during the period.
+        query(
+          `SELECT ${CHEQUE_COLUMNS} ${CHEQUE_JOINS}
+           WHERE (t.transaction_type = 'CREDIT' AND t.returned_date BETWEEN $1 AND $2)
+              OR (t.transaction_type = 'DEBIT' AND t.cancelled_date BETWEEN $1 AND $2)
+           ORDER BY COALESCE(t.returned_date, t.cancelled_date), LOWER(e.name), t.cheque_number`,
+          [start, end]
+        ) as Promise<TransactionWithEntity[]>,
+      ]);
+      const returnedRows = reversed.filter((c) => c.transaction_type === 'CREDIT');
+      const cancelledRows = reversed.filter((c) => c.transaction_type === 'DEBIT');
+      const transitRows = open.filter((c) => c.transaction_type === 'CREDIT');
+      const unpresentedRows = open.filter((c) => c.transaction_type === 'DEBIT');
+      const transit = sum(transitRows, (r) => r.amount);
+      const unpaid = sum(unpresentedRows, (r) => r.amount);
+      const book = p.bookBalance;
+      const asAt = formatDate(end);
+
+      const statement: Section = {
+        title: `Reconciliation as at ${asAt}`,
+        noSort: true,
+        columns: [{ key: 'item', label: 'Item' }, { key: 'count', label: 'Cheques', type: 'number' }, { key: 'amount', label: 'Amount (LKR)', type: 'money' }],
+        rows: [
+          ...(book !== undefined ? [{ cells: { item: 'Balance as per cash book', count: null, amount: book } }] : []),
+          { cells: { item: 'Add: cheques issued to creditors, not yet cleared (unpresented)', count: unpresentedRows.length, amount: unpaid } },
+          { cells: { item: 'Less: customer cheques deposited, not yet credited (in transit)', count: transitRows.length, amount: -transit } },
+          book !== undefined
+            ? { kind: 'total', cells: { item: 'Balance as per bank statement', count: null, amount: book + unpaid - transit } }
+            : { kind: 'total', cells: { item: 'Difference: bank statement − cash book', count: null, amount: unpaid - transit } },
+        ],
+      };
+      const a = activity ?? {};
+      const line = (item: string, n: string, amt: string) => ({ cells: { item, count: a[n] ?? 0, amount: num(a[amt]) } });
+      const activitySection: Section = {
+        title: `Cheque activity, ${label}`,
+        noSort: true,
+        columns: [{ key: 'item', label: 'Activity' }, { key: 'count', label: 'Cheques', type: 'number' }, { key: 'amount', label: 'Amount (LKR)', type: 'money' }],
+        rows: [
+          line('Customer cheques deposited', 'deposited_n', 'deposited'),
+          line('Customer cheques credited by the bank', 'credited_n', 'credited'),
+          line('Customer cheques returned', 'returned_n', 'returned'),
+          line('Creditor cheques cleared by the bank', 'cleared_n', 'cleared'),
+          line('Creditor cheques cancelled', 'cancelled_n', 'cancelled'),
+        ],
       };
       return {
         title: this.title,
-        subtitle: [monthLabel(month), p.bank].filter(Boolean).join(' · '),
+        subtitle: label,
         summary: [
-          { label: 'Issued this month', value: `${formatAmount(all.i.amount)} (${all.i.count})` },
-          { label: 'Cleared this month', value: `${formatAmount(all.c.amount)} (${all.c.count})` },
-          { label: `Outstanding at ${formatDate(end)}`, value: `${formatAmount(all.o.amount)} (${all.o.count})` },
+          { label: 'Unpresented cheques', value: `${formatAmount(unpaid)} (${unpresentedRows.length})` },
+          { label: 'Deposits in transit', value: `${formatAmount(transit)} (${transitRows.length})` },
+          book !== undefined
+            ? { label: 'Balance as per bank statement', value: formatAmount(book + unpaid - transit) }
+            : { label: 'Bank − cash book', value: formatAmount(unpaid - transit) },
         ],
         sections: [
+          statement,
+          activitySection,
           {
-            title: 'Summary by bank',
-            columns: [
-              { key: 'bank', label: 'Bank' },
-              { key: 'issued_count', label: 'Issued', type: 'number' }, { key: 'issued', label: 'Issued (LKR)', type: 'money' },
-              { key: 'cleared_count', label: 'Cleared', type: 'number' }, { key: 'cleared', label: 'Cleared (LKR)', type: 'money' },
-              { key: 'outstanding_count', label: 'Outstanding', type: 'number' }, { key: 'outstanding', label: 'Outstanding (LKR)', type: 'money' },
+            title: `Creditor cheques not yet cleared at ${asAt}`,
+            columns: [C.creditor, C.grn, C.chequeNo, C.chequeDate, C.bank, C.amount],
+            rows: [
+              ...unpresentedRows.map((c) => ({ cells: cells(c) })),
+              { kind: 'total', cells: { entity_name: `Total — ${plural(unpresentedRows.length, 'cheque')}`, amount: unpaid } },
             ],
-            rows: summaryRows,
           },
-          detail('outstanding', `Outstanding cheques at ${formatDate(end)}`),
-          detail('cleared', `Cheques cleared in ${monthLabel(month)}`, { key: 'cleared_date', label: 'Cleared Date', type: 'date' }),
+          {
+            title: `Customer cheques deposited, not yet credited at ${asAt}`,
+            columns: [C.customer, C.chequeNo, C.chequeDate, { key: 'deposited_date', label: 'Deposited Date', type: 'date' }, C.bank, C.amount],
+            rows: [
+              ...transitRows.map((c) => ({ cells: cells(c, { deposited_date: c.deposited_date }) })),
+              { kind: 'total', cells: { entity_name: `Total — ${plural(transitRows.length, 'cheque')}`, amount: transit } },
+            ],
+          },
+          {
+            title: `Customer cheques returned, ${label}`,
+            columns: [C.customer, C.chequeNo, C.chequeDate, { key: 'returned_date', label: 'Returned Date', type: 'date' }, C.bank, C.amount],
+            rows: [
+              ...returnedRows.map((c) => ({ cells: cells(c, { returned_date: c.returned_date }) })),
+              { kind: 'total', cells: { entity_name: `Total — ${plural(returnedRows.length, 'cheque')}`, amount: sum(returnedRows, (r) => r.amount) } },
+            ],
+          },
+          {
+            title: `Creditor cheques cancelled, ${label}`,
+            columns: [C.creditor, C.grn, C.chequeNo, C.chequeDate, { key: 'cancelled_date', label: 'Cancelled Date', type: 'date' }, C.bank, C.amount],
+            rows: [
+              ...cancelledRows.map((c) => ({ cells: cells(c, { cancelled_date: c.cancelled_date }) })),
+              { kind: 'total', cells: { entity_name: `Total — ${plural(cancelledRows.length, 'cheque')}`, amount: sum(cancelledRows, (r) => r.amount) } },
+            ],
+          },
         ],
       };
     },
@@ -616,15 +872,15 @@ export const REPORTS: ReportDefinition[] = [
   // ── Registers (exports of the filtered cheque lists) ───────────────────────
   ...(['CREDIT', 'DEBIT'] as const).map((type): ReportDefinition => ({
     slug: type === 'CREDIT' ? 'customer-cheques' : 'creditor-cheques',
-    title: type === 'CREDIT' ? 'Customer Cheque Register' : 'Outstanding Cheque Register',
+    title: type === 'CREDIT' ? 'Customer Cheque Register' : 'Creditor Cheque Register',
     group: 'Registers',
-    description: type === 'CREDIT' ? 'All customer cheques matching the register filters.' : 'All creditor cheques matching the register filters. (SRS 3)',
+    description: type === 'CREDIT' ? 'All customer cheques matching the register filters.' : 'All creditor cheques matching the register filters.',
     params: ['register'],
     async build(_p, raw) {
       const filters = parseChequeFilters(raw, type);
       const params: unknown[] = [];
       const rows = (await query(
-        `SELECT ${CHEQUE_COLUMNS} ${CHEQUE_JOINS} ${chequeWhere(filters, params)} ORDER BY t.cheque_date, t.created_at`,
+        `SELECT ${CHEQUE_COLUMNS} ${CHEQUE_JOINS} ${chequeWhere(filters, params)} ORDER BY ${chequeOrderBy(filters, 't.cheque_date, t.created_at')}`,
         params
       )) as TransactionWithEntity[];
       const byStatus = [...groupBy(rows, (r) => r.status).entries()].map(([s, list]) => ({

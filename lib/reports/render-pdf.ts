@@ -6,6 +6,7 @@ import { formatDate, formatDateTime } from '@/lib/dates';
 import { formatNumber } from '@/lib/format';
 import { STATUS_LABEL, type ChequeStatus } from '@/types';
 import { LOGO_ASPECT, LOGO_PNG_BASE64 } from './logoData';
+import { columnLabel } from './columns';
 import type { Cell, Column, ReportData } from './types';
 
 type RGB = [number, number, number];
@@ -31,7 +32,7 @@ const STATUS_COLOR: Partial<Record<ChequeStatus, RGB>> = {
 export function pdfText(value: string | null | undefined): string {
   if (!value) return '';
   return value
-    .replace(/[–—]/g, '-')
+    .replace(/[–—−]/g, '-')
     .replace(/[‘’]/g, "'")
     .replace(/[“”]/g, '"')
     .replace(/…/g, '...')
@@ -160,7 +161,7 @@ export function renderPdf(report: ReportData, username: string): Uint8Array {
       startY,
       theme: 'grid',
       margin: { left: margin, right: margin, bottom: 14, top: 14 },
-      head: [section.columns.map((c) => ({ content: c.label, styles: { halign: alignOf(c) } }))],
+      head: [section.columns.map((c) => ({ content: pdfText(columnLabel(c)), styles: { halign: alignOf(c) } }))],
       body,
       headStyles: { fillColor: GREEN, textColor: [255, 255, 255], fontSize: 7.5, fontStyle: 'bold' },
       bodyStyles: { textColor: INK, fontSize: 7.5, lineColor: LINE, cellPadding: 1.8 },

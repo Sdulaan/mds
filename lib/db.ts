@@ -1,5 +1,31 @@
 import 'server-only';
-import { neon } from '@neondatabase/serverless';
+import { neon, neonConfig } from '@neondatabase/serverless';
+
+// ── Resilience to flaky networks ─────────────────────────────────────────────
+// Errors raised while *opening* the connection mean the request never reached the
+// database, so retrying is always safe (even for writes). Anything that fails after
+// the connection is open is not retried.
+const CONNECT_ERRORS = new Set(['UND_ERR_CONNECT_TIMEOUT', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH']);
+const RETRIES = 2;
+
+function isConnectError(error: unknown): boolean {
+  const cause = (error as { cause?: { code?: string } })?.cause;
+  return error instanceof TypeError && !!cause?.code && CONNECT_ERRORS.has(cause.code);
+}
+
+async function fetchWithRetry(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetch(input, init);
+    } catch (error) {
+      if (attempt >= RETRIES || !isConnectError(error)) throw error;
+      console.warn(`[db] connection failed (${(error as { cause: { code: string } }).cause.code}), retrying (${attempt + 1}/${RETRIES})`);
+      await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+    }
+  }
+}
+
+neonConfig.fetchFunction = fetchWithRetry;
 
 // Lazy singleton — resolved at first query call, not at module evaluation.
 // This keeps `next build` from throwing when DATABASE_URL is absent locally.

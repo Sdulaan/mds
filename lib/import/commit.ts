@@ -1,6 +1,7 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
 import { query, transaction } from '@/lib/db';
+import { LINK_UNLINKED_CHEQUES } from '@/lib/data/grns';
 import { nameKey } from '@/lib/names';
 import { todayKey } from '@/lib/dates';
 import { ENTITY_TYPE_FOR, type ChequeStatus, type EntityType, type TransactionType } from '@/types';
@@ -121,6 +122,9 @@ export function buildImportStatements(plan: ImportPlan, userId: string): { text:
       ],
     });
   }
+
+  // Creditor cheques pay GRNs: link each to its GRN, creating the GRN from the cheque when missing.
+  if (plan.toInsert.some((c) => c.type === 'DEBIT')) statements.push({ text: LINK_UNLINKED_CHEQUES, params: [] });
 
   return statements;
 }

@@ -1,11 +1,13 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { requireAdmin } from '@/lib/auth';
-import { getActivity, getUsers } from '@/lib/data/admin';
+import { ACTIVITY_SORT_KEYS, getActivity, getUsers } from '@/lib/data/admin';
 import { formatDateTime } from '@/lib/dates';
 import { isDateKey, isUuid, pick } from '@/lib/filters';
+import { parseSort, sortHref, type Sort } from '@/lib/sort';
 import { btnSecondary, card, cn, input, td, th } from '@/lib/ui';
 import PageHeader from '@/components/PageHeader';
+import SortHeader, { SortInputs } from '@/components/SortHeader';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Activity Log' };
@@ -23,7 +25,7 @@ const ACTION_TONE: Record<string, string> = {
   MERGE: 'bg-pending-soft text-pending',
 };
 
-// SRS §8 / §12: every change and user-wise activity is traceable.
+// SRS §8 / §12: every change and each user's activity is traceable.
 export default async function ActivityPage({ searchParams }: PageProps<'/admin/activity'>) {
   await requireAdmin();
   const sp = await searchParams;
@@ -37,13 +39,21 @@ export default async function ActivityPage({ searchParams }: PageProps<'/admin/a
     from: isDateKey(from) ? from : undefined,
     to: isDateKey(to) ? to : undefined,
   };
-  const [entries, users] = await Promise.all([getActivity(filters), getUsers()]);
+  const parsed = parseSort(sp, ACTIVITY_SORT_KEYS);
+  // Default order (no ?sort): newest first.
+  const sort: Sort = parsed.sort ? parsed : { sort: 'when', dir: 'desc' };
+  const filterQuery = new URLSearchParams(
+    Object.entries({ user: filters.userId, action: filters.action, from: filters.from, to: filters.to }).filter((e): e is [string, string] => !!e[1])
+  ).toString();
+  const href = (column: string) => sortHref('/admin/activity', filterQuery, sort, column);
+  const [entries, users] = await Promise.all([getActivity({ ...filters, sort: parsed }), getUsers()]);
 
   return (
     <div>
       <PageHeader title="Activity Log" description="Who did what, and when — every change, status update, import, export and sign-in." />
 
       <form className={`${card} mb-5 flex flex-wrap items-end gap-3 p-4`}>
+        <SortInputs sort={parsed} />
         <select name="user" defaultValue={filters.userId ?? ''} className={cn(input, 'w-auto')} aria-label="User">
           <option value="">All users</option>
           {users.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.username}</option>)}
@@ -65,9 +75,9 @@ export default async function ActivityPage({ searchParams }: PageProps<'/admin/a
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-line bg-surface-2">
-                  <th className={th}>When</th>
-                  <th className={th}>User</th>
-                  <th className={th}>Action</th>
+                  <SortHeader label="When" column="when" current={sort} href={href('when')} />
+                  <SortHeader label="User" column="user" current={sort} href={href('user')} />
+                  <SortHeader label="Action" column="action" current={sort} href={href('action')} />
                   <th className={th}>Details</th>
                 </tr>
               </thead>
@@ -94,7 +104,7 @@ export default async function ActivityPage({ searchParams }: PageProps<'/admin/a
               </tbody>
             </table>
           </div>
-          {entries.length >= 300 && <p className="border-t border-line px-4 py-3 text-xs text-muted">Showing the latest 300 entries — narrow the filters to see older activity.</p>}
+          {entries.length >= 300 && <p className="border-t border-line px-4 py-3 text-xs text-muted">Showing the first 300 entries — narrow the filters to see older activity.</p>}
         </div>
       )}
     </div>

@@ -109,6 +109,8 @@ export interface Purchase extends AuditColumns {
   purchase_date: string;
   amount: string | number;
   remarks: string | null;
+  /** Paid by cheques that aren't cancelled. */
+  paid: number;
 }
 
 export interface AppUser {
@@ -142,6 +144,8 @@ export interface ChequeFilters {
   from?: string; // 'YYYY-MM-DD' (cheque date)
   to?: string;
   bank?: string;
+  sort?: string; // one of CHEQUE_SORT_KEYS; default is newest cheque date first
+  dir?: 'asc' | 'desc';
 }
 
 // ─── Server Action Results ────────────────────────────────────────────────────

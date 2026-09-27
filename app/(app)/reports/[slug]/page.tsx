@@ -6,9 +6,11 @@ import { ChevronLeft } from 'lucide-react';
 import { requireUser } from '@/lib/auth';
 import { getBankNames } from '@/lib/data/cheques';
 import { getEntityOptions } from '@/lib/data/entities';
-import { recentMonths } from '@/lib/dates';
+import { MONTHS_AHEAD, recentMonths } from '@/lib/dates';
 import { getReport } from '@/lib/reports/definitions';
 import { paramsToQuery, parseReportParams } from '@/lib/reports/params';
+import { sortReport } from '@/lib/reports/sort';
+import { sortHref } from '@/lib/sort';
 import type { ReportDefinition, ReportParams } from '@/lib/reports/types';
 import { card } from '@/lib/ui';
 import PageHeader from '@/components/PageHeader';
@@ -23,7 +25,10 @@ export async function generateMetadata({ params }: PageProps<'/reports/[slug]'>)
 }
 
 async function ReportContent({ def, params, raw }: { def: ReportDefinition; params: ReportParams; raw: URLSearchParams }) {
-  const report = await def.build(params, raw);
+  const report = sortReport(await def.build(params, raw), params.sort, params.dir);
+  const path = `/reports/${def.slug}`;
+  const unsorted = paramsToQuery({ ...params, sort: undefined });
+  const sort = { sort: params.sort, dir: params.dir ?? 'asc' } as const;
   const empty = report.sections.every((s) => s.rows.every((r) => r.kind === 'total'));
   return (
     <>
@@ -33,7 +38,12 @@ async function ReportContent({ def, params, raw }: { def: ReportDefinition; para
         </p>
         <ReportActions slug={def.slug} query={paramsToQuery(params)} disabled={empty} />
       </div>
-      <ReportView report={report} />
+      <ReportView
+        report={report}
+        sort={sort}
+        sortHref={(key) => sortHref(path, unsorted, sort, key)}
+        resetHref={params.sort ? `${path}?${unsorted}` : undefined}
+      />
     </>
   );
 }
@@ -50,7 +60,7 @@ export default async function ReportPage({ params, searchParams }: PageProps<'/r
   const reportParams = parseReportParams(def, raw);
   const [entities, banks] = await Promise.all([
     def.entityType ? getEntityOptions(def.entityType) : Promise.resolve([]),
-    def.params.includes('bank') ? getBankNames(def.group === 'Receivables' ? 'CREDIT' : 'DEBIT') : Promise.resolve([]),
+    def.params.includes('bank') ? getBankNames(def.entityType === 'CUSTOMER' ? 'CREDIT' : 'DEBIT') : Promise.resolve([]),
   ]);
 
   return (
@@ -60,7 +70,7 @@ export default async function ReportPage({ params, searchParams }: PageProps<'/r
       </Link>
       <PageHeader title={def.title} description={def.description} />
       <div className={`${card} mb-5 p-4`}>
-        <ReportParamsForm def={def} params={reportParams} entities={entities} banks={banks} months={recentMonths(36)} />
+        <ReportParamsForm def={def} params={reportParams} entities={entities} banks={banks} months={recentMonths(36, MONTHS_AHEAD)} />
       </div>
       <Suspense key={JSON.stringify(reportParams)} fallback={<div className="h-96 animate-pulse rounded-xl bg-surface-2" />}>
         <ReportContent def={def} params={reportParams} raw={raw} />

@@ -103,7 +103,7 @@ async function DashboardContent() {
         <SectionHeading title="Creditor cheques (payables)" href="/payables" linkText="Open register" />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <KPICard
-            title="Outstanding cheques"
+            title="Uncleared cheques"
             value={formatAmount(p.outstanding.amount)}
             subtitle={`${n(p.outstanding.count)} not yet cleared`}
             icon={<Clock className="h-5 w-5" />}
@@ -124,20 +124,20 @@ async function DashboardContent() {
             tone="neutral"
           />
           <KPICard
-            title="Creditors outstanding"
+            title="Creditors outstanding balance"
             value={formatAmount(p.creditorsOutstanding)}
-            subtitle="Opening balances + purchases − payments"
+            subtitle="Opening balances + purchases − cleared cheques"
             icon={<Wallet className="h-5 w-5" />}
             tone="brand"
           />
         </div>
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <ChartCard
-            title="Monthly outstanding cheque trend"
+            title="Monthly uncleared cheque trend"
             subtitle="Uncleared cheques at each month end"
             data={toColumns(p.outstandingTrend)}
             barClass="bg-debit"
-            countLabel="outstanding"
+            countLabel="uncleared"
           />
           <ChartCard
             title="Monthly cleared cheque trend"
@@ -148,7 +148,7 @@ async function DashboardContent() {
           />
         </div>
         <section className={`${card} mt-4 p-5`}>
-          <h3 className="text-base font-semibold text-fg">Creditor-wise outstanding amount</h3>
+          <h3 className="text-base font-semibold text-fg">Uncleared cheques by creditor</h3>
           <p className="mb-4 text-xs text-muted">Top 10 creditors by uncleared cheque value · amount · number of cheques</p>
           <RankedBars data={p.topCreditors} barClass="bg-debit" />
         </section>

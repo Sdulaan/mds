@@ -1,6 +1,7 @@
 import 'server-only';
 import { query } from '@/lib/db';
 import { requireUser } from '@/lib/auth';
+import { naturalOrder, sqlOrder } from '@/lib/sort';
 import type { ChequeFilters, TransactionType, TransactionWithEntity } from '@/types';
 
 // Read-only data access. Deliberately NOT server actions ('use server'), so these
@@ -50,6 +51,26 @@ export function chequeWhere(filters: ChequeFilters, params: unknown[]): string {
   return `WHERE ${conditions.join(' AND ')}`;
 }
 
+// Status sorts follow the workflow (in hand → deposited → credited → returned; pending → cleared → cancelled).
+const STATUS_RANK = `CASE t.status WHEN 'IN_HAND' THEN 1 WHEN 'DEPOSITED' THEN 2 WHEN 'CREDITED' THEN 3 WHEN 'RETURNED' THEN 4
+  WHEN 'PENDING' THEN 1 WHEN 'CLEARED' THEN 2 WHEN 'CANCELLED' THEN 3 END`;
+
+/** ORDER BY for the register sort (whitelisted keys only; see CHEQUE_SORT_KEYS). */
+export function chequeOrderBy(filters: ChequeFilters, fallback = 't.cheque_date DESC, t.created_at DESC'): string {
+  const dir = filters.dir ?? 'asc';
+  const primary: Record<string, string> = {
+    grn: naturalOrder('t.grn_number', dir),
+    entity: sqlOrder('LOWER(e.name)', dir),
+    cheque_number: naturalOrder('t.cheque_number', dir),
+    cheque_date: sqlOrder('t.cheque_date', dir),
+    amount: sqlOrder('t.amount', dir),
+    status: sqlOrder(STATUS_RANK, dir),
+    entry_date: sqlOrder('t.entry_date', dir),
+  };
+  const order = filters.sort ? primary[filters.sort] : undefined;
+  return order ? `${order}, ${fallback}` : fallback;
+}
+
 export const PAGE_SIZE = 100;
 
 export interface ChequePage {
@@ -76,7 +97,7 @@ export async function getChequePage(filters: ChequeFilters, page = 1): Promise<C
 
   const rows = await query(
     `SELECT ${CHEQUE_COLUMNS} ${CHEQUE_JOINS} ${where}
-     ORDER BY t.cheque_date DESC, t.created_at DESC
+     ORDER BY ${chequeOrderBy(filters)}
      LIMIT ${PAGE_SIZE} OFFSET ${(current - 1) * PAGE_SIZE}`,
     params
   );
@@ -124,52 +145,28 @@ export async function getBankNames(type?: TransactionType): Promise<string[]> {
 }
 
 export interface DuplicateMatch {
-  field: 'cheque_number' | 'grn_number';
   value: string;
   entity_name: string;
   cheque_date: string;
 }
 
 /**
- * SRS §7 duplicate control.
- *  - Creditor cheques: our own cheque numbers are unique per bank; GRN numbers should be paid once.
- *  - Customer cheques: the same cheque number from the same customer (and bank) is a duplicate.
+ * SRS §7 duplicate control for creditor cheques: our own cheque numbers are unique per bank.
+ * (GRNs can't be paid twice because of the GRN links; customer cheques aren't checked.)
  */
 export async function findDuplicates(input: {
   type: TransactionType;
   entityId: string;
   chequeNumber: string;
   bankName: string | null;
-  grnNumber: string | null;
   excludeId?: string;
 }): Promise<DuplicateMatch[]> {
-  const params: unknown[] = [input.type, input.chequeNumber, input.excludeId ?? '00000000-0000-0000-0000-000000000000'];
-  let chequeScope: string;
-  if (input.type === 'DEBIT') {
-    params.push(input.bankName ?? '');
-    chequeScope = `COALESCE(t.bank_name, '') ILIKE $4`;
-  } else {
-    params.push(input.entityId, input.bankName ?? '');
-    chequeScope = `t.entity_id = $4 AND COALESCE(t.bank_name, '') ILIKE $5`;
-  }
-
   const rows = await query(
-    `SELECT 'cheque_number' AS field, t.cheque_number AS value, e.name AS entity_name, t.cheque_date::text
+    `SELECT t.cheque_number AS value, e.name AS entity_name, t.cheque_date::text
      FROM transactions t JOIN entities e ON e.id = t.entity_id
-     WHERE t.transaction_type = $1 AND LOWER(t.cheque_number) = LOWER($2) AND t.id <> $3 AND ${chequeScope}
+     WHERE t.transaction_type = $1 AND LOWER(t.cheque_number) = LOWER($2) AND t.id <> $3 AND COALESCE(t.bank_name, '') ILIKE $4
      LIMIT 3`,
-    params
+    [input.type, input.chequeNumber, input.excludeId ?? '00000000-0000-0000-0000-000000000000', input.bankName ?? '']
   );
-
-  if (input.type === 'DEBIT' && input.grnNumber) {
-    const grn = await query(
-      `SELECT 'grn_number' AS field, t.grn_number AS value, e.name AS entity_name, t.cheque_date::text
-       FROM transactions t JOIN entities e ON e.id = t.entity_id
-       WHERE t.transaction_type = 'DEBIT' AND LOWER(t.grn_number) = LOWER($1) AND t.id <> $2
-       LIMIT 3`,
-      [input.grnNumber, input.excludeId ?? '00000000-0000-0000-0000-000000000000']
-    );
-    rows.push(...grn);
-  }
   return rows as DuplicateMatch[];
 }

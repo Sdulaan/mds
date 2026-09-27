@@ -25,10 +25,12 @@ export async function savePurchase(_prev: ActionResult, formData: FormData): Pro
     if (!isUuid(entityId)) return { success: false, message: 'Please select a creditor.' };
     const purchaseDate = optionalDate(formData, 'purchase_date', 'Purchase date');
     if (!purchaseDate) return { success: false, message: 'Purchase date is required.' };
+    const grnNumber = optionalText(formData, 'grn_number', 100);
+    if (!grnNumber) return { success: false, message: 'GRN number is required.' };
 
     const values = {
       entity_id: entityId,
-      grn_number: optionalText(formData, 'grn_number', 100),
+      grn_number: grnNumber,
       invoice_number: optionalText(formData, 'invoice_number', 100),
       purchase_date: purchaseDate,
       amount: money(formData, 'amount', 'Amount'),
@@ -37,6 +39,22 @@ export async function savePurchase(_prev: ActionResult, formData: FormData): Pro
 
     const [entity] = await sql`SELECT name, type FROM entities WHERE id = ${entityId}`;
     if (!entity || entity.type !== 'VENDOR') return { success: false, message: 'Please select a creditor.' };
+
+    // GRNs already on cheques: the creditor can't change, and a lower amount (goods returned)
+    // leaves the GRN over-paid until the old cheque is cancelled.
+    let note = '';
+    if (existing) {
+      const [links] = await sql`
+        SELECT COUNT(*)::int AS n, COALESCE(SUM(g.amount) FILTER (WHERE t.status <> 'CANCELLED'), 0)::float AS paid
+        FROM cheque_grns g JOIN transactions t ON t.id = g.transaction_id WHERE g.purchase_id = ${id}
+      `;
+      if (links.n > 0 && entityId !== existing.entity_id) {
+        return { success: false, message: 'This GRN is already on a cheque, so its creditor cannot be changed.' };
+      }
+      if (links.paid > values.amount + 0.005) {
+        note = ` Cheques already pay ${formatAmount(links.paid)} on this GRN — cancel the old cheque, then issue a new one for the correct amount.`;
+      }
+    }
 
     if (existing) {
       await sql`
@@ -62,7 +80,8 @@ export async function savePurchase(_prev: ActionResult, formData: FormData): Pro
     }
     revalidatePath('/purchases');
     revalidatePath('/reports', 'layout');
-    return { success: true, message: existing ? 'Purchase updated.' : 'Purchase added.' };
+    revalidatePath('/payables');
+    return { success: true, message: (existing ? 'Purchase updated.' : 'Purchase added.') + note };
   } catch (error) {
     if (error instanceof FormError) return { success: false, message: error.message };
     console.error('[savePurchase]', error);
@@ -75,6 +94,11 @@ export async function deletePurchase(id: string): Promise<ActionResult> {
   if (!user) return UNAUTHORIZED;
   if (!canDelete(user)) return FORBIDDEN;
   if (!isUuid(id)) return { success: false, message: 'Purchase not found.' };
+
+  const [linked] = await sql`SELECT COUNT(*)::int AS n FROM cheque_grns WHERE purchase_id = ${id}`;
+  if (linked?.n) {
+    return { success: false, message: 'This GRN is on a cheque, so it cannot be deleted. Edit or delete the cheque first.' };
+  }
 
   const [row] = await sql`
     DELETE FROM purchases p USING entities e WHERE p.id = ${id} AND e.id = p.entity_id

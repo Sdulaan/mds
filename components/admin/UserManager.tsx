@@ -1,10 +1,12 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useMemo, useState, useTransition } from 'react';
 import { KeyRound, Loader2, UserPlus } from 'lucide-react';
 import { createUser, resetPassword, updateUser } from '@/actions/userActions';
+import SortHeader from '@/components/SortHeader';
 import { useFormAction } from '@/components/useFormAction';
 import { formatDate } from '@/lib/dates';
+import { nextSort, type Sort } from '@/lib/sort';
 import { alertError, alertSuccess, btnPrimary, btnSmall, card, cn, input, label, td, th } from '@/lib/ui';
 import type { AppUser, Role } from '@/types';
 
@@ -12,6 +14,25 @@ export default function UserManager({ users, currentUserId }: { users: AppUser[]
   const { state, pending, formRef, onSubmit } = useFormAction(createUser);
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [sort, setSort] = useState<Sort>({ dir: 'asc' });
+  const sorted = useMemo(() => {
+    const value: Record<string, (u: AppUser) => string | number> = {
+      user: (u) => (u.full_name || u.username).toLowerCase(),
+      role: (u) => u.role,
+      status: (u) => (u.is_active ? 0 : 1),
+      created: (u) => u.created_at,
+    };
+    const get = sort.sort ? value[sort.sort] : undefined;
+    if (!get) return users;
+    const sign = sort.dir === 'asc' ? 1 : -1;
+    return [...users].sort((a, b) => {
+      const x = get(a), y = get(b);
+      return sign * (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y)));
+    });
+  }, [users, sort]);
+  const header = (label: string, column: string) => (
+    <SortHeader label={label} column={column} current={sort} onSort={() => setSort(nextSort(sort, column))} />
+  );
 
   const run = (fn: () => Promise<{ success: boolean; message: string }>) =>
     startTransition(async () => {
@@ -66,15 +87,15 @@ export default function UserManager({ users, currentUserId }: { users: AppUser[]
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-line bg-surface-2">
-                <th className={th}>User</th>
-                <th className={th}>Role</th>
-                <th className={th}>Status</th>
-                <th className={th}>Created</th>
+                {header('User', 'user')}
+                {header('Role', 'role')}
+                {header('Status', 'status')}
+                {header('Created', 'created')}
                 <th className={th}><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
-              {users.map((u) => (
+              {sorted.map((u) => (
                 <tr key={u.id} className={u.is_active ? '' : 'opacity-60'}>
                   <td className={td}>
                     <p className="font-medium text-fg">{u.full_name || u.username}{u.id === currentUserId && <span className="ml-2 text-xs text-subtle">(you)</span>}</p>

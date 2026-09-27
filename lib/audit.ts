@@ -13,7 +13,7 @@ interface AuditInput {
   user: Pick<CurrentUser, 'id' | 'username'> | null;
 }
 
-/** Record who did what (SRS §8 audit trail, §12 user-wise activity tracking). Never throws. */
+/** Record who did what (SRS §8 audit trail, §12 per-user activity tracking). Never throws. */
 export async function logAudit({ table, recordId = null, action, summary, changes = null, user }: AuditInput) {
   try {
     await sql`

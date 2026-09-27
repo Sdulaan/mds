@@ -4,10 +4,16 @@ import { useState, useTransition } from 'react';
 import Link from 'next/link';
 import { FileSearch, Pencil } from 'lucide-react';
 import { setChequeFlag } from '@/actions/chequeActions';
+import SortHeader from '@/components/SortHeader';
 import StatusBadge from '@/components/StatusBadge';
 import { formatDate } from '@/lib/dates';
-import { formatAmount } from '@/lib/format';
-import { card, td, th } from '@/lib/ui';
+import { formatNumber } from '@/lib/format';
+import type { Sort } from '@/lib/sort';
+import { card, cn, td as tdBase, th as thBase } from '@/lib/ui';
+
+// This register has many columns: slightly tighter cells so it fits beside the sidebar.
+const th = cn(thBase, 'px-3');
+const td = cn(tdBase, 'px-3');
 import { FLAGS_FOR, type StatusFlag, type TransactionType, type TransactionWithEntity } from '@/types';
 
 const FLAG_DATE: Record<StatusFlag, keyof TransactionWithEntity> = {
@@ -23,6 +29,9 @@ interface ChequeRegisterProps {
   /** IDs of rows the current user may edit (admins: all; standard users: their own). */
   editableIds: string[];
   entityLabel: string;
+  sort: Sort;
+  /** Header link for each sortable column (built on the server, keeping the filters). */
+  sortLinks: Record<string, string>;
 }
 
 function StatusCheckboxes({ cheque, editable }: { cheque: TransactionWithEntity; editable: boolean }) {
@@ -39,14 +48,14 @@ function StatusCheckboxes({ cheque, editable }: { cheque: TransactionWithEntity;
 
   return (
     <div className={isPending ? 'opacity-50' : undefined}>
-      <div className="flex gap-3">
+      <div className="flex flex-col gap-1.5">
         {FLAGS_FOR[cheque.transaction_type].map(({ flag, label }) => {
           const date = cheque[FLAG_DATE[flag]] as string | null;
           return (
             <label
               key={flag}
               title={date ? `${label} on ${formatDate(date)}` : editable ? `Mark as ${label.toLowerCase()}` : 'You can only change your own entries'}
-              className={`flex items-center gap-1.5 text-xs ${editable ? 'cursor-pointer text-fg' : 'cursor-not-allowed text-subtle'}`}
+              className={`flex items-center gap-1.5 whitespace-nowrap text-xs ${editable ? 'cursor-pointer text-fg' : 'cursor-not-allowed text-subtle'}`}
             >
               <input
                 type="checkbox"
@@ -70,7 +79,7 @@ function statusDate(c: TransactionWithEntity): string | null {
   return c.returned_date ?? c.cancelled_date ?? c.cleared_date ?? c.deposited_date;
 }
 
-export default function ChequeRegister({ type, rows, editableIds, entityLabel }: ChequeRegisterProps) {
+export default function ChequeRegister({ type, rows, editableIds, entityLabel, sort, sortLinks }: ChequeRegisterProps) {
   if (rows.length === 0) {
     return (
       <div className={`${card} flex flex-col items-center justify-center py-20 text-center`}>
@@ -91,14 +100,14 @@ export default function ChequeRegister({ type, rows, editableIds, entityLabel }:
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-line bg-surface-2">
-              {type === 'DEBIT' && <th className={th}>GRN No.</th>}
-              <th className={th}>{entityLabel}</th>
-              <th className={th}>Cheque No.</th>
-              <th className={th}>Cheque Date</th>
-              <th className={`${th} text-right`}>Amount</th>
-              <th className={th}>Status</th>
+              {type === 'DEBIT' && <SortHeader label="GRN No." column="grn" className="px-3" current={sort} href={sortLinks.grn} />}
+              <SortHeader label={entityLabel} column="entity" className="px-3" current={sort} href={sortLinks.entity} />
+              <SortHeader label="Cheque No." column="cheque_number" className="px-3" current={sort} href={sortLinks.cheque_number} />
+              <SortHeader label="Cheque Date" column="cheque_date" className="px-3" current={sort} href={sortLinks.cheque_date} />
+              <SortHeader label="Amount (LKR)" column="amount" className="px-3" current={sort} href={sortLinks.amount} align="right" />
+              <SortHeader label="Status" column="status" className="px-3" current={sort} href={sortLinks.status} />
               <th className={th}>{type === 'CREDIT' ? 'Deposit / Credit / Return' : 'Clear / Cancel'}</th>
-              <th className={th}>Entry Date</th>
+              <SortHeader label="Entry Date" column="entry_date" className="px-3" current={sort} href={sortLinks.entry_date} />
               <th className={th}><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
@@ -108,7 +117,7 @@ export default function ChequeRegister({ type, rows, editableIds, entityLabel }:
               return (
                 <tr key={c.id} className="align-top transition-colors hover:bg-surface-2/60">
                   {type === 'DEBIT' && <td className={`${td} whitespace-nowrap font-mono text-xs text-muted`}>{c.grn_number || '—'}</td>}
-                  <td className={td}>
+                  <td className={`${td} min-w-44`}>
                     <p className="font-medium text-fg">{c.entity_name}</p>
                     {(c.bank_name || c.remarks) && (
                       <p className="max-w-64 truncate text-xs text-subtle" title={[c.bank_name, c.remarks].filter(Boolean).join(' · ')}>
@@ -118,8 +127,8 @@ export default function ChequeRegister({ type, rows, editableIds, entityLabel }:
                   </td>
                   <td className={`${td} whitespace-nowrap font-mono text-muted`}>{c.cheque_number}</td>
                   <td className={`${td} whitespace-nowrap text-muted`}>{formatDate(c.cheque_date)}</td>
-                  <td className={`${td} whitespace-nowrap text-right font-semibold tabular-nums text-fg`}>{formatAmount(c.amount)}</td>
-                  <td className={td}>
+                  <td className={`${td} whitespace-nowrap text-right font-medium tabular-nums text-fg`}>{formatNumber(c.amount)}</td>
+                  <td className={`${td} whitespace-nowrap`}>
                     <StatusBadge status={c.status} />
                     {date && <p className="mt-1 whitespace-nowrap text-[11px] text-subtle">{formatDate(date)}</p>}
                   </td>

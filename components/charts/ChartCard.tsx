@@ -1,4 +1,4 @@
-import { formatAmount } from '@/lib/format';
+import { formatNumber } from '@/lib/format';
 import { card } from '@/lib/ui';
 import ColumnChart, { type ColumnDatum } from './ColumnChart';
 
@@ -20,12 +20,19 @@ export default function ChartCard({ title, subtitle, data, barClass, countLabel 
       <details className="mt-3 text-xs">
         <summary className="cursor-pointer text-muted hover:text-fg">View as table</summary>
         <table className="mt-2 w-full">
+          <thead>
+            <tr className="text-subtle">
+              <th className="py-1 text-left font-medium">Month</th>
+              {data.some((d) => d.count !== undefined) && <th className="py-1 text-right font-medium">Cheques</th>}
+              <th className="py-1 text-right font-medium">Amount (LKR)</th>
+            </tr>
+          </thead>
           <tbody className="divide-y divide-line">
             {data.map((d) => (
               <tr key={d.key}>
                 <td className="py-1 text-muted">{d.title}</td>
                 {d.count !== undefined && <td className="py-1 text-right tabular-nums text-muted">{d.count.toLocaleString()}</td>}
-                <td className="py-1 text-right tabular-nums text-fg">{formatAmount(d.value)}</td>
+                <td className="py-1 text-right tabular-nums text-fg">{formatNumber(d.value)}</td>
               </tr>
             ))}
           </tbody>

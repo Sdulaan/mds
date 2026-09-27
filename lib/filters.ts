@@ -1,4 +1,5 @@
 import { formatDate, isMonthKey, monthLabel } from '@/lib/dates';
+import { parseSort } from '@/lib/sort';
 import { STATUSES_FOR, STATUS_LABEL, type ChequeFilters, type ChequeStatus, type TransactionType } from '@/types';
 
 type RawParams = Record<string, string | string[] | undefined> | URLSearchParams;
@@ -13,11 +14,15 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export const isUuid = (v: string | undefined | null): v is string => !!v && UUID_RE.test(v);
 export const isDateKey = (v: string | undefined | null): v is string => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
+/** Register columns that can be sorted (see CHEQUE_ORDER in lib/data/cheques.ts). */
+export const CHEQUE_SORT_KEYS = ['grn', 'entity', 'cheque_number', 'cheque_date', 'amount', 'status', 'entry_date'] as const;
+
 /** Parse and whitelist register filters from URL search params. */
 export function parseChequeFilters(params: RawParams, type: TransactionType): ChequeFilters {
   const status = pick(params, 'status');
   const q = pick(params, 'q')?.trim().slice(0, 100);
   const bank = pick(params, 'bank')?.trim().slice(0, 100);
+  const sort = parseSort(params, CHEQUE_SORT_KEYS);
   return {
     type,
     q: q || undefined,
@@ -27,6 +32,7 @@ export function parseChequeFilters(params: RawParams, type: TransactionType): Ch
     from: isDateKey(pick(params, 'from')) ? pick(params, 'from') : undefined,
     to: isDateKey(pick(params, 'to')) ? pick(params, 'to') : undefined,
     bank: bank || undefined,
+    ...(sort.sort && { sort: sort.sort, dir: sort.dir }),
   };
 }
 
@@ -39,6 +45,10 @@ export function filtersToQuery(filters: Partial<ChequeFilters>): string {
   if (filters.from) params.set('from', filters.from);
   if (filters.to) params.set('to', filters.to);
   if (filters.bank) params.set('bank', filters.bank);
+  if (filters.sort) {
+    params.set('sort', filters.sort);
+    params.set('dir', filters.dir ?? 'asc');
+  }
   return params.toString();
 }
 

@@ -159,8 +159,10 @@ h1, h2, h3 {
 }
 
 /* Table headers default to left; utilities (e.g. text-right) override this. */
-th {
-  text-align: left;
+@layer base {
+  th {
+    text-align: left;
+  }
 }
 
 :focus-visible {

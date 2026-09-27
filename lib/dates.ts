@@ -57,14 +57,20 @@ export function monthEnd(key: string): string {
   return `${key}-${pad(new Date(Date.UTC(year, month, 0)).getUTCDate())}`;
 }
 
-/** The last `count` months (newest first), anchored on the first of the month so no month is skipped. */
-export function recentMonths(count = 24): { value: string; label: string }[] {
+/**
+ * Month options, newest first: `ahead` future months (for post-dated cheques), the current month
+ * and the `count - 1` months before it. Anchored on the first of the month so no month is skipped.
+ */
+export function recentMonths(count = 24, ahead = 0): { value: string; label: string }[] {
   const now = currentMonthKey();
-  return Array.from({ length: count }, (_, i) => {
-    const value = addMonths(now, -i);
+  return Array.from({ length: count + ahead }, (_, i) => {
+    const value = addMonths(now, ahead - i);
     return { value, label: monthLabel(value) };
   });
 }
+
+/** How far ahead month filters reach: covers post-dated cheques on long credit terms. */
+export const MONTHS_AHEAD = 4;
 
 /** Parse Date objects, ISO strings and Postgres text timestamps ('2026-09-26 14:05:01.12+00'). */
 export function toDate(value: Date | string): Date {

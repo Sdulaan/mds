@@ -1,7 +1,12 @@
+import Link from 'next/link';
+import { RotateCcw } from 'lucide-react';
+import SortHeader from '@/components/SortHeader';
 import StatusBadge from '@/components/StatusBadge';
 import { formatDate } from '@/lib/dates';
-import { formatAmount } from '@/lib/format';
-import { card, td, th } from '@/lib/ui';
+import { formatNumber } from '@/lib/format';
+import { columnLabel } from '@/lib/reports/columns';
+import type { Sort } from '@/lib/sort';
+import { card, cn, td, th } from '@/lib/ui';
 import type { ChequeStatus } from '@/types';
 import type { Cell, Column, ReportData } from '@/lib/reports/types';
 
@@ -9,7 +14,7 @@ function display(value: Cell, col: Column) {
   if (value === null || value === undefined || value === '') return <span className="text-subtle">{col.type === 'money' || col.type === 'number' ? '' : '—'}</span>;
   switch (col.type) {
     case 'money':
-      return typeof value === 'number' ? formatAmount(value) : value;
+      return typeof value === 'number' ? formatNumber(value) : value;
     case 'number':
       return typeof value === 'number' ? value.toLocaleString() : value;
     case 'date':
@@ -23,8 +28,17 @@ function display(value: Cell, col: Column) {
 
 const MAX_PREVIEW_ROWS = 400;
 
-/** On-screen preview of a report (the PDF / Excel downloads contain everything). */
-export default function ReportView({ report }: { report: ReportData }) {
+interface ReportViewProps {
+  report: ReportData;
+  sort: Sort;
+  /** Header link that sorts by a column (keeps the report parameters). */
+  sortHref: (key: string) => string;
+  /** Link back to the report's own order, when a sort is applied. */
+  resetHref?: string;
+}
+
+/** On-screen preview of a report (the PDF / Excel downloads contain everything, in the same order). */
+export default function ReportView({ report, sort, sortHref, resetHref }: ReportViewProps) {
   let shown = 0;
   const empty = report.sections.every((s) => s.rows.every((r) => r.kind === 'total'));
 
@@ -41,6 +55,15 @@ export default function ReportView({ report }: { report: ReportData }) {
         </div>
       )}
 
+      {resetHref && !empty && (
+        <p className="flex items-center justify-end gap-2 text-xs text-muted">
+          Sorted by {report.sections.flatMap((s) => s.columns).find((c) => c.key === sort.sort)?.label ?? sort.sort}, {sort.dir === 'asc' ? 'ascending' : 'descending'} — subtotals and totals stay in place.
+          <Link href={resetHref} scroll={false} className="inline-flex items-center gap-1 font-medium text-brand hover:underline">
+            <RotateCcw className="h-3 w-3" /> Default order
+          </Link>
+        </p>
+      )}
+
       {empty ? (
         <p className={`${card} py-16 text-center text-sm text-subtle`}>No records match the selected options.</p>
       ) : (
@@ -55,8 +78,17 @@ export default function ReportView({ report }: { report: ReportData }) {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-line bg-surface-2">
-                      {section.columns.map((c) => (
-                        <th key={c.key} className={`${th} ${c.type === 'money' || c.type === 'number' ? 'text-right' : ''}`}>{c.label}</th>
+                      {section.columns.map((c) => section.noSort ? (
+                        <th key={c.key} className={cn(th, (c.type === 'money' || c.type === 'number') && 'text-right')}>{columnLabel(c)}</th>
+                      ) : (
+                        <SortHeader
+                          key={c.key}
+                          label={columnLabel(c)}
+                          column={c.key}
+                          current={sort}
+                          href={sortHref(c.key)}
+                          align={c.type === 'money' || c.type === 'number' ? 'right' : 'left'}
+                        />
                       ))}
                     </tr>
                   </thead>

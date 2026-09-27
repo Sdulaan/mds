@@ -4,6 +4,7 @@ import { COMPANY } from '@/lib/company';
 import { formatDateTime } from '@/lib/dates';
 import { STATUS_LABEL, type ChequeStatus } from '@/types';
 import { LOGO_ASPECT, LOGO_PNG_BASE64 } from './logoData';
+import { columnLabel } from './columns';
 import type { Cell, Column, ReportData } from './types';
 
 // Letterhead palette
@@ -79,11 +80,11 @@ export async function renderExcel(report: ReportData, username: string): Promise
     const header = ws.getRow(r);
     section.columns.forEach((c, i) => {
       const cell = header.getCell(i + 1);
-      cell.value = c.label;
+      cell.value = columnLabel(c);
       cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
       cell.fill = fill(GREEN);
       cell.alignment = { horizontal: c.type === 'money' || c.type === 'number' ? 'right' : 'left', vertical: 'middle' };
-      widths[i] = Math.max(widths[i], c.label.length + 2);
+      widths[i] = Math.max(widths[i], columnLabel(c).length + 2);
     });
     header.height = 18;
     r++;

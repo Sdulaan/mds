@@ -45,23 +45,33 @@ Built with Next.js 16 (App Router), React 19, Tailwind CSS v4 and Neon serverles
 
 | Area | What it does |
 | --- | --- |
-| Dashboard | Receivables and payables totals, monthly cheque volume/value, credited and cleared trends, outstanding trend, creditor-wise outstanding |
+| Dashboard | Receivables and payables totals, monthly cheque volume/value, credited and cleared trends, uncleared cheque trend, uncleared cheques by creditor |
 | Customer Cheques / Creditor Cheques | Registers with instant search (name, cheque no., GRN, bank, amount), filters (status, customer/creditor, month, date range, bank), status checkboxes that record dates automatically, export/print |
-| Add / edit cheque | GRN, cheque no., date, amount, bank, entry date, remarks; edit, reschedule and delete; duplicate cheque/GRN detection with administrator override |
+| Add / edit cheque | GRN, cheque no., date, amount, bank, entry date, remarks; edit, reschedule and delete; duplicate cheque/GRN detection with administrator override for creditor cheques (customer cheques may repeat a number, since cheques from different banks can share one) |
 | Customers / Creditors | Full profiles (address, contact, email, credit terms / opening balance, remarks), active/inactive, delete with safety checks, merge duplicates |
-| Purchases (GRN) | Creditor purchases used by the monthly payables report |
+| Purchases (GRN) | Creditor purchases (GRNs) with paid amount and balance; used by the payables reports. Creditor cheques are issued against these GRNs |
 | Reports | 14 reports from both SRS documents plus register exports — each previews on screen and exports to PDF / Excel with print preview and direct print |
 | Administration | Users & roles, activity log, Excel import, backup & restore |
 
 ### Roles (SRS §10)
 
-- **System administrator** — full access, delete records, approve duplicate entries, manage users, import, backup/restore.
+- **System administrator** — full access, delete records, approve duplicate creditor cheques, manage users, import, backup/restore.
 - **Standard user** — add records, edit their own records, view and print reports.
 
 ### Audit trail (SRS §8, §12)
 
 Every record stores created by/at and modified by/at, and every change, status update, import, export and
 sign-in is written to the activity log (Administration → Activity Log; per-record history on each edit page).
+
+## Creditor cheques and GRNs
+
+- A creditor cheque pays one or more **GRNs** from Purchases, chosen from a dropdown of that creditor's unpaid GRNs.
+  The amount fills in with their unpaid total and can be changed.
+- The amount is applied oldest GRN first; a GRN that isn't fully paid stays available (part payments).
+- Cancelled cheques don't count: to handle returned goods, edit the GRN amount, cancel the old cheque and issue a
+  new one. A cancelled cheque can't be restored if its GRN has been paid by another cheque since.
+- Creditor cheques imported from Excel (or in old backups) whose GRN isn't in Purchases get a GRN created
+  automatically from the cheque's amount and date.
 
 ## Importing existing Excel data
 
@@ -86,4 +96,8 @@ Administration → **Import Excel** reads the monthly *Credit* and *Debit Cheque
 ## Notes
 
 - Dates such as "this month" use Sri Lanka time (`Asia/Colombo`, see `lib/dates.ts`).
-- Reports: "Payments made" in the payables report = cheques issued in the period (cancelled cheques excluded).
+- Reports: "Payments made" in the payables report = cheques **cleared** in the period, so a cheque that stays uncleared and is
+  later cancelled never counts as a payment and past periods don't change. Cheques issued but not yet cleared at the period
+  end are shown separately as "Uncleared cheques".
+- Uncleared / in-hand reports show each cheque's status as it stood at the report's "to" date (or at each month end for
+  the monthly summaries): a cheque issued in March and cleared in September is pending in a March report.

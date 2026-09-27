@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { ArrowDownLeft, ArrowRight, ArrowUpRight } from 'lucide-react';
+import { ArrowDownLeft, ArrowRight, ArrowUpRight, Sigma } from 'lucide-react';
 import { requireUser } from '@/lib/auth';
 import { REPORTS } from '@/lib/reports/definitions';
 import { card } from '@/lib/ui';
@@ -11,6 +11,7 @@ export const metadata: Metadata = { title: 'Reports' };
 const GROUPS = [
   { group: 'Receivables', title: 'Customer cheques (receivables)', icon: ArrowDownLeft, tone: 'bg-credit-soft text-credit' },
   { group: 'Payables', title: 'Creditor cheques & payables', icon: ArrowUpRight, tone: 'bg-debit-soft text-debit' },
+  { group: 'Summary', title: 'Summary Reports', icon: Sigma, tone: 'bg-brand-soft text-brand' },
 ] as const;
 
 export default async function ReportsPage() {

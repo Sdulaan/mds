@@ -1,4 +1,6 @@
+import { currentMonthKey } from '@/lib/dates';
 import { btnPrimary, cn, input } from '@/lib/ui';
+import PeriodPicker from '@/components/reports/PeriodPicker';
 import type { ReportDefinition, ReportParams } from '@/lib/reports/types';
 
 interface ReportParamsFormProps {
@@ -18,6 +20,26 @@ export default function ReportParamsForm({ def, params, entities, banks, months 
   return (
     <form className="flex flex-wrap items-end gap-3">
       <input type="hidden" name="run" value="1" />
+      {has('monthOrRange') && (
+        <PeriodPicker
+          initial={params.mode === 'date' || (!params.month && (params.from || params.to)) ? 'date' : 'month'}
+          month={params.month ?? currentMonthKey()}
+          from={params.from}
+          to={params.to}
+          months={months}
+          labelClass={labelClass}
+          field={field}
+        />
+      )}
+      {has('bookBalance') && (
+        <div>
+          <label htmlFor="r-book" className={labelClass}>Balance as per cash book (optional)</label>
+          <input
+            id="r-book" type="number" name="book" step="0.01" placeholder="0.00"
+            defaultValue={params.bookBalance ?? ''} className={cn(field, 'w-44 tabular-nums')}
+          />
+        </div>
+      )}
       {has('period') && (
         <div>
           <label htmlFor="r-period" className={labelClass}>Period</label>
@@ -31,7 +53,7 @@ export default function ReportParamsForm({ def, params, entities, banks, months 
       {has('month') && (
         <div>
           <label htmlFor="r-month" className={labelClass}>{has('period') ? 'Month (or any month in the quarter/year)' : 'Month'}</label>
-          <select id="r-month" name="month" defaultValue={params.month ?? ''} className={field}>
+          <select id="r-month" name="month" defaultValue={params.month ?? currentMonthKey()} className={field}>
             {months.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
           </select>
         </div>

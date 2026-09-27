@@ -105,12 +105,12 @@ export async function getDashboard(): Promise<DashboardData> {
        WHERE t.transaction_type = 'DEBIT' AND t.status = 'PENDING'
        GROUP BY e.id, e.name ORDER BY SUM(t.amount) DESC LIMIT 10`
     ),
-    // Creditors payable balance: opening balances + purchases − cheques issued (not cancelled).
+    // Creditors payable balance: opening balances + purchases − cheques cleared (a cheque is paid once it clears).
     query(
       `SELECT
          COALESCE((SELECT SUM(opening_balance) FROM entities WHERE type = 'VENDOR'), 0)
          + COALESCE((SELECT SUM(amount) FROM purchases), 0)
-         - COALESCE((SELECT SUM(amount) FROM transactions WHERE transaction_type = 'DEBIT' AND status <> 'CANCELLED'), 0) AS balance`
+         - COALESCE((SELECT SUM(amount) FROM transactions WHERE transaction_type = 'DEBIT' AND status = 'CLEARED'), 0) AS balance`
     ),
   ]);
 
