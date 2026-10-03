@@ -62,7 +62,7 @@ async function DashboardContent() {
           <KPICard
             title="Cheques in hand"
             value={formatAmount(r.inHand.amount)}
-            subtitle={`${n(r.inHand.count)} not yet deposited`}
+            subtitle={`${n(r.inHand.count)} dated ${thisMonth}, not yet deposited`}
             icon={<Hand className="h-5 w-5" />}
             tone="pending"
           />

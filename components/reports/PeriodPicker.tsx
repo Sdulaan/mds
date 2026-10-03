@@ -10,13 +10,16 @@ interface PeriodPickerProps {
   from?: string;
   to?: string;
   months: { value: string; label: string }[];
+  /** Adds a Monthly / Quarterly / Annual choice to the month side. */
+  period?: 'month' | 'quarter' | 'year';
+  withPeriod?: boolean;
   labelClass: string;
   field: string;
 }
 
 // Month-wise or date-wise, never both: the inputs of the mode not chosen are disabled,
 // so the browser leaves them out of the submitted report parameters.
-export default function PeriodPicker({ initial, month, from, to, months, labelClass, field }: PeriodPickerProps) {
+export default function PeriodPicker({ initial, month, from, to, months, period, withPeriod, labelClass, field }: PeriodPickerProps) {
   const [mode, setMode] = useState(initial);
   const byMonth = mode === 'month';
   const tab = (value: 'month' | 'date', text: string, Icon: typeof CalendarDays) => (
@@ -44,8 +47,18 @@ export default function PeriodPicker({ initial, month, from, to, months, labelCl
           {tab('date', 'Date range', CalendarRange)}
         </div>
       </div>
+      {withPeriod && (
+        <div className={dim(!byMonth)}>
+          <label htmlFor="r-period" className={labelClass}>Period</label>
+          <select id="r-period" name="period" defaultValue={period ?? 'month'} disabled={!byMonth} className={field}>
+            <option value="month">Monthly</option>
+            <option value="quarter">Quarterly</option>
+            <option value="year">Annual</option>
+          </select>
+        </div>
+      )}
       <div className={dim(!byMonth)}>
-        <label htmlFor="r-month" className={labelClass}>Month</label>
+        <label htmlFor="r-month" className={labelClass}>{withPeriod ? 'Month (or any month in the quarter/year)' : 'Month'}</label>
         <select id="r-month" name="month" defaultValue={month ?? months[0]?.value} disabled={!byMonth} className={field}>
           {months.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
         </select>

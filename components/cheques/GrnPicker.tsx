@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Check, ChevronDown, Plus, Search, X } from 'lucide-react';
+import { Check, ChevronDown, Plus, X } from 'lucide-react';
 import { formatDate } from '@/lib/dates';
 import { formatNumber } from '@/lib/format';
 import type { GrnOption } from '@/lib/grn-allocation';
@@ -21,6 +21,7 @@ interface GrnPickerProps {
 // Multi-select dropdown of a creditor's unpaid GRNs. Selected ids are submitted as `grn_ids`.
 export default function GrnPicker({ id, options, selected, onChange, disabled }: GrnPickerProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const listId = useId();
@@ -48,25 +49,17 @@ export default function GrnPicker({ id, options, selected, onChange, disabled }:
       {selected.map((s) => <input key={s} type="hidden" name="grn_ids" value={s} />)}
 
       <div
-        id={id}
         role="combobox"
-        tabIndex={disabled ? -1 : 0}
         aria-expanded={open}
         aria-controls={listId}
         aria-disabled={disabled}
-        onClick={() => !disabled && setOpen((o) => !o)}
-        onKeyDown={(e) => {
+        onClick={() => {
           if (disabled) return;
-          if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
-            e.preventDefault();
-            setOpen(true);
-          } else if (e.key === 'Escape') setOpen(false);
+          setOpen(true);
+          inputRef.current?.focus();
         }}
-        className={cn(input, 'flex min-h-[2.75rem] cursor-pointer flex-wrap items-center gap-1.5 py-1.5 pr-10', disabled && 'cursor-not-allowed opacity-60')}
+        className={cn(input, 'flex min-h-[2.75rem] cursor-text flex-wrap items-center gap-1.5 py-1.5 pr-10', disabled && 'cursor-not-allowed opacity-60')}
       >
-        {chosen.length === 0 && (
-          <span className="text-subtle">{disabled ? 'Select the creditor first' : 'Select GRN(s)…'}</span>
-        )}
         {chosen.map((g) => (
           <span key={g.id} className="inline-flex items-center gap-1 rounded-md bg-brand-soft px-2 py-1 text-xs font-medium text-brand">
             GRN {g.grn_number}
@@ -83,24 +76,38 @@ export default function GrnPicker({ id, options, selected, onChange, disabled }:
             </button>
           </span>
         ))}
+        <input
+          id={id}
+          ref={inputRef}
+          value={q}
+          disabled={disabled}
+          autoComplete="off"
+          onChange={(e) => {
+            setQ(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => !disabled && setOpen(true)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              if (open && q.trim() && filtered.length) {
+                toggle(filtered[0].id);
+                setQ('');
+              }
+            } else if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              setOpen(true);
+            } else if (e.key === 'Escape') setOpen(false);
+            else if (e.key === 'Backspace' && !q && selected.length) onChange(selected.slice(0, -1));
+          }}
+          placeholder={chosen.length ? '' : disabled ? 'Select the creditor first' : 'Type or select GRN(s)…'}
+          className="min-w-[8rem] flex-1 bg-transparent py-1 text-sm outline-none placeholder:text-subtle"
+        />
         <ChevronDown className={cn('pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-subtle transition-transform', open && 'rotate-180')} />
       </div>
 
       {open && (
         <div className="absolute left-0 right-0 top-full z-30 mt-1.5 overflow-hidden rounded-lg border border-line bg-surface shadow-lg">
-          {options.length > 5 && (
-            <div className="relative border-b border-line p-2">
-              <Search className="pointer-events-none absolute left-4.5 top-1/2 h-4 w-4 -translate-y-1/2 text-subtle" />
-              <input
-                autoFocus
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && e.preventDefault()}
-                placeholder="Search GRN number…"
-                className={cn(input, 'py-2 pl-9')}
-              />
-            </div>
-          )}
           <ul id={listId} role="listbox" aria-multiselectable className="max-h-64 overflow-y-auto py-1">
             {filtered.map((g) => {
               const isSelected = selected.includes(g.id);

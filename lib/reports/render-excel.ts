@@ -10,6 +10,7 @@ import type { Cell, Column, ReportData } from './types';
 // Letterhead palette
 const GREEN = 'FF168A43';
 const INK = 'FF132B3F';
+const BLACK = 'FF000000';
 const MUTED = 'FF53667A';
 const fill = (argb: string): ExcelJS.Fill => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
 const MONEY = '#,##0.00';
@@ -52,7 +53,7 @@ export async function renderExcel(report: ReportData, username: string): Promise
 
   // ── Title block: company, report title, generated date/time, user ────────
   ws.getCell(6, 1).value = report.title;
-  ws.getCell(6, 1).font = { bold: true, size: 15, color: { argb: GREEN } };
+  ws.getCell(6, 1).font = { bold: true, size: 15, color: { argb: BLACK } };
   ws.getCell(7, 1).value = report.subtitle;
   ws.getCell(7, 1).font = { bold: true, size: 11, color: { argb: INK } };
   ws.getCell(8, 1).value = `Generated ${formatDateTime(new Date())} by ${username}`;
@@ -74,7 +75,7 @@ export async function renderExcel(report: ReportData, username: string): Promise
     if (section.rows.length === 0) continue;
     if (section.title) {
       ws.getCell(r, 1).value = section.title;
-      ws.getCell(r, 1).font = { bold: true, size: 12, color: { argb: GREEN } };
+      ws.getCell(r, 1).font = { bold: true, size: 12, color: { argb: BLACK } };
       r++;
     }
     const header = ws.getRow(r);

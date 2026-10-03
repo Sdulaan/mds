@@ -43,9 +43,10 @@ export interface ReportData {
 
 /**
  * monthOrRange: a Month ⇄ Date range switch (summary reports); only the chosen mode is used.
+ * periodOrRange: like monthOrRange, but the month side also has a Monthly / Quarterly / Annual choice.
  * bookBalance: optional "balance as per cash book" for the bank reconciliation statement.
  */
-export type ParamKind = 'dateRange' | 'entity' | 'bank' | 'month' | 'monthOrRange' | 'bookBalance' | 'period' | 'register';
+export type ParamKind = 'dateRange' | 'entity' | 'bank' | 'month' | 'monthOrRange' | 'periodOrRange' | 'bookBalance' | 'period' | 'register';
 
 export interface ReportParams {
   from?: string;

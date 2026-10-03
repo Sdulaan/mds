@@ -20,13 +20,15 @@ export default function ReportParamsForm({ def, params, entities, banks, months 
   return (
     <form className="flex flex-wrap items-end gap-3">
       <input type="hidden" name="run" value="1" />
-      {has('monthOrRange') && (
+      {(has('monthOrRange') || has('periodOrRange')) && (
         <PeriodPicker
           initial={params.mode === 'date' || (!params.month && (params.from || params.to)) ? 'date' : 'month'}
           month={params.month ?? currentMonthKey()}
           from={params.from}
           to={params.to}
           months={months}
+          withPeriod={has('periodOrRange')}
+          period={params.period}
           labelClass={labelClass}
           field={field}
         />
