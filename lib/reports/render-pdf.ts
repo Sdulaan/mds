@@ -17,6 +17,7 @@ const GREEN_SOFT: RGB = [230, 245, 235];
 const GREEN_MID: RGB = [205, 234, 214];
 const INK: RGB = [19, 43, 63];
 const MUTED: RGB = [83, 102, 122];
+const BLACK: RGB = [0, 0, 0];
 const LINE: RGB = [221, 232, 225];
 const STATUS_COLOR: Partial<Record<ChequeStatus, RGB>> = {
   IN_HAND: [164, 90, 6],
@@ -80,7 +81,7 @@ export function renderPdf(report: ReportData, username: string): Uint8Array {
   doc.line(margin, 25, right, 25);
 
   // ── Title block: report title, parameters, generated date/time and user ───
-  doc.setTextColor(...GREEN);
+  doc.setTextColor(...BLACK);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13);
   doc.text(pdfText(report.title), margin, 32);
@@ -137,7 +138,7 @@ export function renderPdf(report: ReportData, username: string): Uint8Array {
         doc.addPage();
         startY = 16;
       }
-      doc.setTextColor(...GREEN);
+      doc.setTextColor(...BLACK);
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(10);
       doc.text(pdfText(section.title), margin, startY + 1);

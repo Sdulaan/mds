@@ -543,18 +543,19 @@ export const REPORTS: ReportDefinition[] = [
     slug: 'creditor-payables',
     title: 'Creditor Payables',
     group: 'Payables',
-    description: 'Opening balance, purchases (GRNs), payments (cheques cleared) and outstanding balance for each creditor, for a month, quarter or year, plus cheques issued but not yet cleared.',
-    params: ['period', 'month', 'entity'],
+    description: 'Opening balance, purchases (GRNs), payments (cheques cleared) and outstanding balance for each creditor, for a month, quarter, year or date range, plus cheques issued but not yet cleared.',
+    params: ['periodOrRange', 'entity'],
     entityType: 'VENDOR',
     defaults: () => ({ period: 'month', month: currentMonthKey() }),
     async build(p) {
+      const byDate = p.mode === 'date' || (!p.month && !!(p.from || p.to));
       const period = p.period ?? 'month';
       const ref = p.month ?? currentMonthKey();
       const [year, month] = ref.split('-').map(Number);
       const startMonth = period === 'year' ? `${year}-01` : period === 'quarter' ? `${year}-${String(Math.floor((month - 1) / 3) * 3 + 1).padStart(2, '0')}` : ref;
       const endMonth = addMonths(startMonth, period === 'year' ? 11 : period === 'quarter' ? 2 : 0);
-      const start = `${startMonth}-01`;
-      const end = monthEnd(endMonth);
+      const end = byDate ? (p.to ?? todayKey()) : monthEnd(endMonth);
+      const start = byDate ? (p.from && p.from <= end ? p.from : `${end.slice(0, 7)}-01`) : `${startMonth}-01`;
 
       const params: unknown[] = [start, end];
       const entityCond = p.entityId ? (params.push(p.entityId), `AND e.id = $3`) : '';
@@ -582,10 +583,10 @@ export const REPORTS: ReportDefinition[] = [
         opening: sum(data, (r) => r.opening), purchases: sum(data, (r) => r.purchases), payments: sum(data, (r) => r.payments),
         outstanding: sum(data, (r) => r.outstanding), uncleared: sum(data, (r) => r.uncleared),
       };
-      const periodLabel = period === 'month' ? monthLabel(startMonth) : `${monthLabel(startMonth, 'short')} – ${monthLabel(endMonth, 'short')}`;
+      const periodLabel = byDate ? `${formatDate(start)} – ${formatDate(end)}` : period === 'month' ? monthLabel(startMonth) : `${monthLabel(startMonth, 'short')} – ${monthLabel(endMonth, 'short')}`;
       return {
         title: this.title,
-        subtitle: [`${period === 'year' ? 'Annual' : period === 'quarter' ? 'Quarterly' : 'Monthly'}: ${periodLabel}`, await entityName(p.entityId)].filter(Boolean).join(' · '),
+        subtitle: [`${byDate ? 'Date range' : period === 'year' ? 'Annual' : period === 'quarter' ? 'Quarterly' : 'Monthly'}: ${periodLabel}`, await entityName(p.entityId)].filter(Boolean).join(' · '),
         summary: [
           { label: 'Opening balance', value: formatAmount(t.opening) },
           { label: 'Purchases', value: formatAmount(t.purchases) },
@@ -677,7 +678,7 @@ export const REPORTS: ReportDefinition[] = [
     slug: 'payables-summary',
     title: 'Creditor Payables Summary',
     group: 'Summary',
-    description: 'Each creditor with their balance at the start of the chosen month or date range, purchases and cleared cheques in the period, and the outstanding balance at the end (opening balance + purchases − cleared cheques), with totals.',
+    description: 'Each creditor with their outstanding balance at the end of the chosen month or date range (opening balance + purchases − cleared cheques), with a total.',
     params: ['monthOrRange'],
     defaults: () => ({ mode: 'month', month: currentMonthKey() }),
     async build(p) {
@@ -708,16 +709,11 @@ export const REPORTS: ReportDefinition[] = [
         subtitle: byDate ? `${formatDate(start)} – ${formatDate(end)}` : monthLabel(month),
         summary: [
           { label: 'Creditors', value: data.length.toLocaleString() },
-          { label: 'Purchases', value: formatAmount(sum(data, (r) => r.purchases)) },
-          { label: 'Cleared cheques', value: formatAmount(sum(data, (r) => r.paid)) },
           { label: 'Total outstanding', value: formatAmount(total) },
         ],
         sections: [{
           columns: [
             { key: 'name', label: 'Creditor' },
-            { key: 'opening', label: 'Opening Balance', type: 'money' },
-            { key: 'purchases', label: 'Purchases', type: 'money' },
-            { key: 'paid', label: 'Cleared Cheques', type: 'money' },
             { key: 'outstanding', label: 'Outstanding Balance', type: 'money' },
           ],
           rows: [
@@ -726,13 +722,77 @@ export const REPORTS: ReportDefinition[] = [
               kind: 'total',
               cells: {
                 name: 'Total',
-                opening: sum(data, (r) => r.opening),
-                purchases: sum(data, (r) => r.purchases),
-                paid: sum(data, (r) => r.paid),
                 outstanding: total,
               },
             },
           ],
+        }],
+      };
+    },
+  },
+  {
+    slug: 'creditor-payment-summary',
+    title: 'Creditor Payment Summary',
+    group: 'Summary',
+    description: 'Every GRN (purchase) dated in the chosen month or date range, with its invoice amount and the cheques issued against it (cheque number, date and the amount applied to that GRN). GRNs with no cheque yet are listed too.',
+    params: ['monthOrRange', 'entity'],
+    entityType: 'VENDOR',
+    defaults: () => ({ mode: 'month', month: currentMonthKey() }),
+    async build(p) {
+      const { start, end, label } = summaryPeriod(p);
+      const params: unknown[] = [start, end];
+      const entityCond = p.entityId ? (params.push(p.entityId), 'AND p.entity_id = $3') : '';
+      const rows = await query(
+        `SELECT e.name, e.is_active, p.id AS purchase_id, p.grn_number, p.invoice_number, p.purchase_date::text AS purchase_date,
+                p.amount AS invoice_amount, t.cheque_number, t.cheque_date::text AS cheque_date, g.amount AS applied
+         FROM purchases p
+         JOIN entities e ON e.id = p.entity_id
+         LEFT JOIN cheque_grns g ON g.purchase_id = p.id
+         LEFT JOIN transactions t ON t.id = g.transaction_id AND t.status <> 'CANCELLED'
+         WHERE p.purchase_date BETWEEN $1::date AND $2::date ${entityCond}
+           AND (g.transaction_id IS NULL OR t.id IS NOT NULL)
+         ORDER BY LOWER(e.name), p.purchase_date, p.grn_number, t.cheque_date, t.cheque_number`,
+        params
+      );
+      // The invoice amount is shown once per GRN so the column total is the real invoiced value.
+      const seen = new Set<string>();
+      const out: Row[] = rows.map((r) => {
+        const first = !seen.has(r.purchase_id);
+        seen.add(r.purchase_id);
+        return {
+          cells: {
+            entity_name: r.name + (r.is_active ? '' : ' (inactive)'),
+            grn_number: r.grn_number ?? '',
+            invoice_number: r.invoice_number ?? '',
+            invoice_amount: first ? num(r.invoice_amount) : null,
+            cheque_number: r.cheque_number ?? '',
+            cheque_date: r.cheque_date ?? '',
+            applied: r.applied === null ? null : num(r.applied),
+          },
+        };
+      });
+      const invoiced = rows.filter((r, i) => rows.findIndex((x) => x.purchase_id === r.purchase_id) === i).reduce((a, r) => a + num(r.invoice_amount), 0);
+      const paid = sum(rows, (r) => r.applied);
+      return {
+        title: this.title,
+        subtitle: [label, await entityName(p.entityId)].filter(Boolean).join(' · '),
+        summary: [
+          { label: 'GRNs', value: seen.size.toLocaleString() },
+          { label: 'Invoice amount', value: formatAmount(invoiced) },
+          { label: 'Cheque amount', value: formatAmount(paid) },
+        ],
+        sections: [{
+          columns: [
+            C.creditor,
+            C.grn,
+            { key: 'invoice_number', label: 'Invoice No.' },
+            { key: 'invoice_amount', label: 'Invoice Amount (LKR)', type: 'money' },
+            C.chequeNo,
+            C.chequeDate,
+            { key: 'applied', label: 'Cheque Amount (LKR)', type: 'money' },
+          ],
+          rows: [...out, { kind: 'total', cells: { entity_name: 'Total', invoice_amount: invoiced, applied: paid } }],
+          noSort: true,
         }],
       };
     },

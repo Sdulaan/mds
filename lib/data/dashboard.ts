@@ -53,8 +53,8 @@ export async function getDashboard(): Promise<DashboardData> {
   const [totals, received, credited, trend, cleared, top, payable] = await Promise.all([
     query(
       `SELECT
-         COUNT(*) FILTER (WHERE transaction_type = 'CREDIT' AND status = 'IN_HAND')::int AS in_hand_n,
-         COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'CREDIT' AND status = 'IN_HAND'), 0) AS in_hand,
+         COUNT(*) FILTER (WHERE transaction_type = 'CREDIT' AND status = 'IN_HAND' AND TO_CHAR(cheque_date, 'YYYY-MM') = $1)::int AS in_hand_n,
+         COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'CREDIT' AND status = 'IN_HAND' AND TO_CHAR(cheque_date, 'YYYY-MM') = $1), 0) AS in_hand,
          COUNT(*) FILTER (WHERE transaction_type = 'CREDIT' AND status = 'DEPOSITED')::int AS deposited_n,
          COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'CREDIT' AND status = 'DEPOSITED'), 0) AS deposited,
          COUNT(*) FILTER (WHERE transaction_type = 'CREDIT' AND status = 'CREDITED' AND TO_CHAR(cleared_date, 'YYYY-MM') = $1)::int AS credited_m_n,

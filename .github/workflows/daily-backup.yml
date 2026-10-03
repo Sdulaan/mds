@@ -26,7 +26,8 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           file="mds-backup-$(TZ=Asia/Colombo date +%F).dump"
-          pg_dump --format=custom --no-owner --no-privileges "$DATABASE_URL" -f "$file"
+          /usr/lib/postgresql/18/bin/pg_dump --version
+          /usr/lib/postgresql/18/bin/pg_dump --format=custom --no-owner --no-privileges "$DATABASE_URL" -f "$file"
           ls -lh "$file"
           echo "BACKUP_FILE=$file" >> "$GITHUB_ENV"
 
