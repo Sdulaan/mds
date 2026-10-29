@@ -151,8 +151,8 @@ export interface DuplicateMatch {
 }
 
 /**
- * SRS §7 duplicate control for creditor cheques: our own cheque numbers are unique per bank.
- * (GRNs can't be paid twice because of the GRN links; customer cheques aren't checked.)
+ * SRS §7 duplicate control. Creditor cheques: our own cheque numbers are unique per bank.
+ * Customer cheques: any earlier cheque with the same number is reported (regardless of bank).
  */
 export async function findDuplicates(input: {
   type: TransactionType;
@@ -164,9 +164,11 @@ export async function findDuplicates(input: {
   const rows = await query(
     `SELECT t.cheque_number AS value, e.name AS entity_name, t.cheque_date::text
      FROM transactions t JOIN entities e ON e.id = t.entity_id
-     WHERE t.transaction_type = $1 AND LOWER(t.cheque_number) = LOWER($2) AND t.id <> $3 AND COALESCE(t.bank_name, '') ILIKE $4
+     WHERE t.transaction_type = $1 AND LOWER(t.cheque_number) = LOWER($2) AND t.id <> $3
+       AND ($5 OR COALESCE(t.bank_name, '') ILIKE $4)
+     ORDER BY t.created_at DESC
      LIMIT 3`,
-    [input.type, input.chequeNumber, input.excludeId ?? '00000000-0000-0000-0000-000000000000', input.bankName ?? '']
+    [input.type, input.chequeNumber, input.excludeId ?? '00000000-0000-0000-0000-000000000000', input.bankName ?? '', input.type === 'CREDIT']
   );
   return rows as DuplicateMatch[];
 }

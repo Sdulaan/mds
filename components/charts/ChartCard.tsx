@@ -17,10 +17,11 @@ export default function ChartCard({ title, subtitle, data, barClass, countLabel 
       <h3 className="text-base font-semibold text-fg">{title}</h3>
       <p className="mb-4 text-xs text-muted">{subtitle}</p>
       <ColumnChart data={data} barClass={barClass} countLabel={countLabel} ariaLabel={`${title}. ${subtitle}`} />
-      <details className="mt-3 text-xs">
-        <summary className="cursor-pointer text-muted hover:text-fg">View as table</summary>
-        <table className="mt-2 w-full">
-          <thead>
+      <details open className="mt-3 text-xs">
+        <summary className="cursor-pointer text-muted hover:text-fg">Monthly summary</summary>
+        <div className="mt-2 max-h-64 overflow-y-auto">
+        <table className="w-full">
+          <thead className="sticky top-0 bg-surface">
             <tr className="text-subtle">
               <th className="py-1 text-left font-medium">Month</th>
               {data.some((d) => d.count !== undefined) && <th className="py-1 text-right font-medium">Cheques</th>}
@@ -37,6 +38,7 @@ export default function ChartCard({ title, subtitle, data, barClass, countLabel 
             ))}
           </tbody>
         </table>
+        </div>
       </details>
     </section>
   );

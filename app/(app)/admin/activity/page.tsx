@@ -8,6 +8,7 @@ import { parseSort, sortHref, type Sort } from '@/lib/sort';
 import { btnSecondary, card, cn, input, td, th } from '@/lib/ui';
 import PageHeader from '@/components/PageHeader';
 import SortHeader, { SortInputs } from '@/components/SortHeader';
+import DateInput from '@/components/DateInput';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Activity Log' };
@@ -62,8 +63,8 @@ export default async function ActivityPage({ searchParams }: PageProps<'/admin/a
           <option value="">All actions</option>
           {ACTIONS.map((a) => <option key={a} value={a}>{a.charAt(0) + a.slice(1).toLowerCase()}</option>)}
         </select>
-        <input type="date" name="from" defaultValue={filters.from ?? ''} className={cn(input, 'w-auto')} aria-label="From" />
-        <input type="date" name="to" defaultValue={filters.to ?? ''} className={cn(input, 'w-auto')} aria-label="To" />
+        <DateInput name="from" defaultValue={filters.from} className="w-36" aria-label="From" />
+        <DateInput name="to" defaultValue={filters.to} className="w-36" aria-label="To" />
         <button type="submit" className={btnSecondary}>Filter</button>
       </form>
 

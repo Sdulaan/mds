@@ -12,6 +12,7 @@ import { allocate, unpaidTotal, type GrnOption } from '@/lib/grn-allocation';
 import { formatNumber } from '@/lib/format';
 import { alertError, alertSuccess, btnPrimary, btnSecondary, cn, input, label } from '@/lib/ui';
 import { ENTITY_LABEL, ENTITY_TYPE_FOR, type TransactionType, type TransactionWithEntity } from '@/types';
+import DateInput from '@/components/DateInput';
 
 interface ChequeFormProps {
   type: TransactionType;
@@ -144,11 +145,14 @@ export default function ChequeForm({
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label htmlFor="cheque_number" className={label}>Cheque Number *</label>
-            <input id="cheque_number" name="cheque_number" required defaultValue={cheque?.cheque_number ?? ''} placeholder="e.g. 004521" className={input} />
+            <input
+              id="cheque_number" name="cheque_number" required defaultValue={cheque?.cheque_number ?? ''} placeholder="e.g. 004521" className={input}
+              {...(type === 'CREDIT' ? { inputMode: 'numeric' as const, pattern: '[0-9]{6}', maxLength: 6, title: 'Exactly 6 digits' } : {})}
+            />
           </div>
           <div>
             <label htmlFor="cheque_date" className={label}>Cheque Date *</label>
-            <input id="cheque_date" name="cheque_date" type="date" required defaultValue={cheque?.cheque_date ?? ''} className={input} />
+            <DateInput id="cheque_date" name="cheque_date" required defaultValue={cheque?.cheque_date ?? ''} />
             {isEdit && <p className="mt-1 text-xs text-subtle">Change this to reschedule the cheque.</p>}
           </div>
           <div>
@@ -177,7 +181,7 @@ export default function ChequeForm({
           </div>
           <div>
             <label htmlFor="entry_date" className={label}>Entry Date</label>
-            <input id="entry_date" name="entry_date" type="date" defaultValue={cheque?.entry_date ?? today} className={input} />
+            <DateInput id="entry_date" name="entry_date" defaultValue={cheque?.entry_date ?? today} />
           </div>
         </div>
 
@@ -210,10 +214,10 @@ export default function ChequeForm({
           </fieldset>
         )}
 
-        {state.duplicate && isAdmin && (
+        {state.duplicate && (isAdmin || type === 'CREDIT') && (
           <label className="flex items-center gap-2 rounded-lg border border-pending/40 bg-pending-soft px-4 py-3 text-sm text-pending">
             <input type="checkbox" name="override_duplicate" className="h-4 w-4 accent-[var(--pending)]" />
-            Save anyway (administrator override)
+            Save anyway{type === 'CREDIT' ? '' : ' (administrator override)'}
           </label>
         )}
       </fieldset>
@@ -236,7 +240,7 @@ function DateField({ name, label: text, value }: { name: string; label: string; 
   return (
     <div>
       <label htmlFor={name} className={label}>{text}</label>
-      <input id={name} name={name} type="date" defaultValue={value ?? ''} className={input} />
+      <DateInput id={name} name={name} defaultValue={value ?? ''} />
     </div>
   );
 }

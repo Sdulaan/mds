@@ -45,7 +45,8 @@ export default function ColumnChart({ data, barClass, countLabel = 'cheques', ar
   const hovered = active !== null ? data[active] : null;
 
   return (
-    <div className="relative select-none" role="img" aria-label={ariaLabel}>
+    <div className="overflow-x-auto pb-1">
+    <div className="relative select-none" role="img" aria-label={ariaLabel} style={{ minWidth: data.length > 12 ? `${data.length * 34 + 48}px` : undefined }}>
       <div className="flex">
         {/* Y axis labels */}
         <div className="relative mr-2 h-48 w-10 shrink-0 text-right text-[10px] tabular-nums text-subtle">
@@ -108,6 +109,7 @@ export default function ColumnChart({ data, barClass, countLabel = 'cheques', ar
           </span>
         ))}
       </div>
+    </div>
     </div>
   );
 }
