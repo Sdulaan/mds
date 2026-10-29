@@ -78,17 +78,33 @@ export function toDate(value: Date | string): Date {
   return new Date(value.replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00'));
 }
 
-/** Format a 'YYYY-MM-DD' (or ISO timestamp) string as '26 Sept 2026' without timezone drift. */
+/** Format a 'YYYY-MM-DD' (or ISO timestamp) string as '26/09/2026' without timezone drift. */
 export function formatDate(dateStr: string | null | undefined): string {
   if (!dateStr) return '';
   const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(dateStr);
   const date = isDateOnly ? new Date(`${dateStr}T00:00:00Z`) : toDate(dateStr);
   return date.toLocaleDateString('en-GB', {
     day: '2-digit',
-    month: 'short',
+    month: '2-digit',
     year: 'numeric',
     timeZone: isDateOnly ? 'UTC' : APP_TIMEZONE,
   });
+}
+
+/** 'YYYY-MM-DD' → 'DD/MM/YYYY' (empty string for empty input). */
+export function isoToDmy(iso: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso ?? '');
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
+}
+
+/** 'DD/MM/YYYY' → 'YYYY-MM-DD', or null if it is not a real calendar date. */
+export function dmyToIso(dmy: string): string | null {
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(dmy.trim());
+  if (!m) return null;
+  const [d, mo, y] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const date = new Date(Date.UTC(y, mo - 1, d));
+  if (date.getUTCFullYear() !== y || date.getUTCMonth() !== mo - 1 || date.getUTCDate() !== d) return null;
+  return `${y}-${pad(mo)}-${pad(d)}`;
 }
 
 export function formatDateTime(date: Date | string): string {

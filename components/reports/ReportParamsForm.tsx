@@ -2,6 +2,7 @@ import { currentMonthKey } from '@/lib/dates';
 import { btnPrimary, cn, input } from '@/lib/ui';
 import PeriodPicker from '@/components/reports/PeriodPicker';
 import type { ReportDefinition, ReportParams } from '@/lib/reports/types';
+import DateInput from '@/components/DateInput';
 
 interface ReportParamsFormProps {
   def: ReportDefinition;
@@ -64,11 +65,11 @@ export default function ReportParamsForm({ def, params, entities, banks, months 
         <>
           <div>
             <label htmlFor="r-from" className={labelClass}>{def.dateLabel ?? 'Date'} from</label>
-            <input id="r-from" type="date" name="from" defaultValue={params.from ?? ''} className={field} />
+            <DateInput id="r-from" name="from" defaultValue={params.from} className={field} />
           </div>
           <div>
             <label htmlFor="r-to" className={labelClass}>to</label>
-            <input id="r-to" type="date" name="to" defaultValue={params.to ?? ''} className={field} />
+            <DateInput id="r-to" name="to" defaultValue={params.to} className={field} />
           </div>
         </>
       )}

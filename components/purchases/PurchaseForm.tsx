@@ -8,6 +8,7 @@ import Combobox from '@/components/Combobox';
 import { useFormAction } from '@/components/useFormAction';
 import { alertError, alertSuccess, btnPrimary, cn, input, label } from '@/lib/ui';
 import type { Purchase } from '@/types';
+import DateInput from '@/components/DateInput';
 
 interface PurchaseFormProps {
   purchase?: Purchase;
@@ -62,7 +63,7 @@ export default function PurchaseForm({ purchase, creditors, today, readOnly = fa
         </div>
         <div>
           <label htmlFor="p-date" className={label}>Purchase / GRN Date *</label>
-          <input id="p-date" name="purchase_date" type="date" required defaultValue={purchase?.purchase_date ?? today} className={input} />
+          <DateInput id="p-date" name="purchase_date" required defaultValue={purchase?.purchase_date ?? today} />
         </div>
         <div>
           <label htmlFor="p-amount" className={label}>Amount (LKR) *</label>

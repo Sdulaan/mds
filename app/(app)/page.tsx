@@ -22,7 +22,7 @@ export const metadata: Metadata = {
 const toColumns = (points: MonthPoint[]) =>
   points.map((p) => ({
     key: p.month,
-    label: monthLabel(p.month, 'short').split(' ')[0],
+    label: monthLabel(p.month, 'short').replace(' 20', " '"),
     title: monthLabel(p.month),
     value: p.amount,
     count: p.count,
@@ -44,7 +44,7 @@ function SectionHeading({ title, href, linkText }: { title: string; href: string
 async function DashboardContent() {
   const { receivables: r, payables: p } = await getDashboard();
   const thisMonth = monthLabel(currentMonthKey());
-  const receivedThisMonth = r.receivedByMonth[r.receivedByMonth.length - 1];
+  const receivedThisMonth = r.receivedByMonth.find((m) => m.month === currentMonthKey()) ?? { month: '', count: 0, amount: 0 };
 
   return (
     <div className="space-y-10">
@@ -84,13 +84,13 @@ async function DashboardContent() {
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <ChartCard
             title="Cheques received per month"
-            subtitle="Total value by cheque date — hover a column for the count"
+            subtitle="All months · total value by cheque date"
             data={toColumns(r.receivedByMonth)}
             barClass="bg-credit"
           />
           <ChartCard
             title="Credited cheques per month"
-            subtitle="Value credited to the bank each month"
+            subtitle="All months · value credited to the bank"
             data={toColumns(r.creditedByMonth)}
             barClass="bg-cleared"
             countLabel="credited"
@@ -133,15 +133,15 @@ async function DashboardContent() {
         </div>
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <ChartCard
-            title="Monthly uncleared cheque trend"
-            subtitle="Uncleared cheques at each month end"
+            title="Uncleared cheques per month"
+            subtitle="All months · uncleared cheques at each month end"
             data={toColumns(p.outstandingTrend)}
             barClass="bg-debit"
             countLabel="uncleared"
           />
           <ChartCard
-            title="Monthly cleared cheque trend"
-            subtitle="Value cleared by the bank each month"
+            title="Cleared cheques per month"
+            subtitle="All months · value cleared by the bank"
             data={toColumns(p.clearedByMonth)}
             barClass="bg-cleared"
             countLabel="cleared"

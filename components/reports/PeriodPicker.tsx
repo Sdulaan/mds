@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { CalendarDays, CalendarRange } from 'lucide-react';
 import { cn } from '@/lib/ui';
+import DateInput from '@/components/DateInput';
 
 interface PeriodPickerProps {
   initial: 'month' | 'date';
@@ -65,11 +66,11 @@ export default function PeriodPicker({ initial, month, from, to, months, period,
       </div>
       <div className={dim(byMonth)}>
         <label htmlFor="r-from" className={labelClass}>From</label>
-        <input id="r-from" type="date" name="from" defaultValue={from ?? ''} disabled={byMonth} required={!byMonth} className={field} />
+        <DateInput id="r-from" name="from" defaultValue={from} disabled={byMonth} required={!byMonth} className={field} />
       </div>
       <div className={dim(byMonth)}>
         <label htmlFor="r-to" className={labelClass}>To</label>
-        <input id="r-to" type="date" name="to" defaultValue={to ?? ''} disabled={byMonth} required={!byMonth} className={field} />
+        <DateInput id="r-to" name="to" defaultValue={to} disabled={byMonth} required={!byMonth} className={field} />
       </div>
     </>
   );
