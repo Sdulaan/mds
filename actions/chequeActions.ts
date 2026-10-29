@@ -116,6 +116,9 @@ export async function saveCheque(_prev: ActionResult, formData: FormData): Promi
 
     const chequeNumber = text(formData, 'cheque_number', 100);
     if (!chequeNumber) return { success: false, message: 'Cheque number is required.' };
+    if (type === 'CREDIT' && !/^\d{6}$/.test(chequeNumber)) {
+      return { success: false, message: 'Cheque number must be exactly 6 digits.' };
+    }
     const chequeDate = optionalDate(formData, 'cheque_date', 'Cheque date');
     if (!chequeDate) return { success: false, message: 'Cheque date is required.' };
     const amount = money(formData, 'amount', 'Amount');
@@ -149,26 +152,26 @@ export async function saveCheque(_prev: ActionResult, formData: FormData): Promi
       : [];
     const grnNumber = type === 'DEBIT' ? allocations.map((a) => a.grn.grn_number).join(', ') : null;
 
-    // SRS §7 duplicate control (creditor cheques only): warn, and only administrators may override.
-    // Customer cheques are never checked: cheques from different banks can share a number and the
-    // bank is optional, so a repeated customer cheque number is normal.
-    const duplicates = type === 'DEBIT'
-      ? await findDuplicates({ type, entityId, chequeNumber, bankName, excludeId: isEdit ? id : undefined })
-      : [];
+    // SRS §7 duplicate control: warn with the earlier cheque's details. Creditor cheques can only be
+    // overridden by administrators; a repeated customer cheque number may be saved by anyone after the warning.
+    const duplicates = await findDuplicates({ type, entityId, chequeNumber, bankName, excludeId: isEdit ? id : undefined });
     const override = formData.get('override_duplicate') === 'on';
-    if (duplicates.length > 0 && !(override && isAdmin(user))) {
+    const canOverride = type === 'CREDIT' || isAdmin(user);
+    if (duplicates.length > 0 && !(override && canOverride)) {
       const details = duplicates
-        .map((d) => `Cheque no. ${d.value} (${d.entity_name}, ${formatDate(d.cheque_date)})`)
+        .map((d) => type === 'CREDIT'
+          ? `previously used by ${d.entity_name} (cheque date ${formatDate(d.cheque_date)})`
+          : `Cheque no. ${d.value} (${d.entity_name}, ${formatDate(d.cheque_date)})`)
         .join('; ');
       return {
         success: false,
         duplicate: true,
-        message: `Duplicate Entry Detected — ${details}. ${
-          isAdmin(user) ? 'Tick "Save anyway" to override.' : 'Only a System Administrator can save a duplicate entry.'
+        message: `Duplicate Entry Detected — cheque number ${chequeNumber} ${type === 'CREDIT' ? '' : 'already exists: '}${details}. ${
+          canOverride ? 'Tick "Save anyway" to override.' : 'Only a System Administrator can save a duplicate entry.'
         }`,
       };
     }
-    const duplicateNote = duplicates.length ? ' — duplicate approved by administrator' : '';
+    const duplicateNote = duplicates.length ? ' — duplicate approved' : '';
 
     const values = {
       entity_id: entityId, cheque_number: chequeNumber, cheque_date: chequeDate, amount, bank_name: bankName,

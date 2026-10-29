@@ -46,9 +46,19 @@ function series(rows: { month: string; count: number; amount: unknown }[], month
 export async function getDashboard(): Promise<DashboardData> {
   await requireUser();
   const now = currentMonthKey();
-  const months = Array.from({ length: 12 }, (_, i) => addMonths(now, i - 11));
-  const start = `${months[0]}-01`;
-  const end = monthEnd(now);
+  // Every month from the first cheque to the latest (post-dated cheques included), at least the last 12.
+  const [range] = await query(
+    `SELECT TO_CHAR(MIN(LEAST(cheque_date, COALESCE(cleared_date, cheque_date))), 'YYYY-MM') AS first,
+            TO_CHAR(MAX(GREATEST(cheque_date, COALESCE(cleared_date, cheque_date))), 'YYYY-MM') AS last
+     FROM transactions`
+  );
+  const floor = addMonths(now, -11);
+  const first = range?.first && range.first < floor ? range.first : floor;
+  const last = range?.last && range.last > now ? range.last : now;
+  const months: string[] = [];
+  for (let m = first; m <= last; m = addMonths(m, 1)) months.push(m);
+  const start = `${first}-01`;
+  const end = monthEnd(last);
 
   const [totals, received, credited, trend, cleared, top, payable] = await Promise.all([
     query(
@@ -92,7 +102,7 @@ export async function getDashboard(): Promise<DashboardData> {
          AND (t.cleared_date IS NULL OR t.cleared_date > (m + INTERVAL '1 month' - INTERVAL '1 day')::date)
          AND (t.cancelled_date IS NULL OR t.cancelled_date > (m + INTERVAL '1 month' - INTERVAL '1 day')::date)
        GROUP BY m ORDER BY m`,
-      [start, `${now}-01`]
+      [start, `${last}-01`]
     ),
     query(
       `SELECT TO_CHAR(cleared_date, 'YYYY-MM') AS month, COUNT(*)::int AS count, SUM(amount) AS amount
