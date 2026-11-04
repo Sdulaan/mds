@@ -41,6 +41,7 @@ const GROUPS: Group[] = [
     icon: ArrowUpRight,
     items: [
       { href: '/payables', label: 'Creditor Cheques', icon: ArrowUpRight },
+      { href: '/blank-cheques', label: 'Blank Cheques', icon: FileText },
       { href: '/purchases', label: 'Purchases (GRN)', icon: ShoppingCart },
       { href: '/creditors', label: 'Creditors', icon: Building2 },
     ],

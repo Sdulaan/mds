@@ -4,6 +4,7 @@ import { ChevronLeft } from 'lucide-react';
 import { isAdmin, requireUser } from '@/lib/auth';
 import { getBankNames } from '@/lib/data/cheques';
 import { getEntityOptions } from '@/lib/data/entities';
+import { getAvailableNumbers } from '@/lib/data/chequeNumbers';
 import { getGrnOptions } from '@/lib/data/grns';
 import { todayKey } from '@/lib/dates';
 import { pick } from '@/lib/filters';
@@ -17,11 +18,13 @@ export const metadata: Metadata = { title: 'Add Cheque' };
 
 export default async function NewChequePage({ searchParams }: PageProps<'/cheques/new'>) {
   const user = await requireUser();
-  const type: TransactionType = pick(await searchParams, 'type') === 'DEBIT' ? 'DEBIT' : 'CREDIT';
-  const [entities, banks, grnOptions] = await Promise.all([
+  const params = await searchParams;
+  const type: TransactionType = pick(params, 'type') === 'DEBIT' ? 'DEBIT' : 'CREDIT';
+  const [entities, banks, grnOptions, available] = await Promise.all([
     getEntityOptions(ENTITY_TYPE_FOR[type]),
     getBankNames(type),
     type === 'DEBIT' ? getGrnOptions() : Promise.resolve([]),
+    type === 'DEBIT' ? getAvailableNumbers() : Promise.resolve([]),
   ]);
   const back = type === 'CREDIT' ? '/receivables' : '/payables';
   const tab = (t: TransactionType, text: string) => (
@@ -50,7 +53,9 @@ export default async function NewChequePage({ searchParams }: PageProps<'/cheque
         {tab('DEBIT', 'Creditor cheque (issued)')}
       </div>
       <div className={`${card} p-6 sm:p-8`}>
-        <ChequeForm key={type} type={type} entities={entities} banks={banks} today={todayKey()} isAdmin={isAdmin(user)} grnOptions={grnOptions} />
+        <ChequeForm key={type} type={type} entities={entities} banks={banks} today={todayKey()} isAdmin={isAdmin(user)} grnOptions={grnOptions}
+          availableNumbers={available} initialNumber={type === 'DEBIT' ? pick(params, 'number') ?? '' : ''} initialEntity={type === 'DEBIT' ? pick(params, 'creditor') ?? '' : ''}
+        />
       </div>
     </div>
   );

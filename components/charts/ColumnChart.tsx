@@ -43,6 +43,8 @@ export default function ColumnChart({ data, barClass, countLabel = 'cheques', ar
   const ticks = niceScale(Math.max(...data.map((d) => d.value), 0));
   const top = ticks[ticks.length - 1];
   const hovered = active !== null ? data[active] : null;
+  // Tooltips near either end are anchored to the column's edge so the amount is never clipped.
+  const edge = active === null ? null : active >= data.length - 3 ? 'right' : active <= 2 ? 'left' : null;
 
   return (
     <div className="overflow-x-auto pb-1">
@@ -88,8 +90,8 @@ export default function ColumnChart({ data, barClass, countLabel = 'cheques', ar
           {/* Tooltip */}
           {hovered && active !== null && (
             <div
-              className="pointer-events-none absolute z-10 -translate-x-1/2 whitespace-nowrap rounded-lg border border-line bg-surface px-3 py-2 text-xs shadow-lg"
-              style={{ left: `${((active + 0.5) / data.length) * 100}%`, bottom: `calc(${Math.min((hovered.value / top) * 100, 80)}% + 10px)` }}
+              className={`pointer-events-none absolute z-10 whitespace-nowrap rounded-lg border border-line bg-surface px-3 py-2 text-xs shadow-lg ${edge === 'right' ? '-translate-x-full' : edge === 'left' ? '' : '-translate-x-1/2'}`}
+              style={{ left: `${((active + 0.5) / data.length) * 100}%`, bottom: `calc(${Math.min((hovered.value / top) * 100, 55)}% + 10px)` }}
             >
               <p className="font-medium text-fg">{hovered.title}</p>
               <p className="tabular-nums text-fg">{formatAmount(hovered.value)}</p>
