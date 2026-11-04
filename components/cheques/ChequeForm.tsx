@@ -25,13 +25,20 @@ interface ChequeFormProps {
   /** Creditor cheques: GRNs that can be paid (all creditors), and those already on this cheque. */
   grnOptions?: GrnOption[];
   initialGrnIds?: string[];
+  /** Creditor cheques: registered cheque numbers not yet used (generated stock and blank cheques). */
+  availableNumbers?: { cheque_number: string; entity_name: string | null }[];
+  /** Prefill from the blank-cheque register. */
+  initialNumber?: string;
+  initialEntity?: string;
 }
 
 export default function ChequeForm({
   type, cheque, entities, banks, today, isAdmin, readOnly = false, grnOptions = [], initialGrnIds = [],
+  availableNumbers = [], initialNumber = '', initialEntity = '',
 }: ChequeFormProps) {
   const router = useRouter();
-  const [entityName, setEntityName] = useState(cheque?.entity_name ?? '');
+  const [entityName, setEntityName] = useState(cheque?.entity_name ?? initialEntity);
+  const [chequeNumber, setChequeNumber] = useState(cheque?.cheque_number ?? initialNumber);
   const [bankName, setBankName] = useState(cheque?.bank_name ?? '');
   const [grnIds, setGrnIds] = useState<string[]>(initialGrnIds);
   const [amount, setAmount] = useState(cheque ? String(Number(cheque.amount)) : '');
@@ -41,6 +48,7 @@ export default function ChequeForm({
     // After adding, start the next cheque with empty dropdowns (the form reset only clears plain inputs).
     if (result.success && !cheque) {
       setEntityName('');
+      setChequeNumber('');
       setBankName('');
       setGrnIds([]);
       setAmount('');
@@ -51,6 +59,10 @@ export default function ChequeForm({
   const match = entities.find((e) => e.name.toLowerCase() === entityName.trim().toLowerCase());
   const entityOptions = useMemo(() => entities.map((e) => ({ value: e.name, hint: e.is_active ? undefined : 'Inactive' })), [entities]);
   const newEntityHref = type === 'CREDIT' ? '/customers/new' : '/creditors/new';
+  const numberOptions = useMemo(
+    () => availableNumbers.map((n) => ({ value: n.cheque_number, hint: n.entity_name ?? undefined })),
+    [availableNumbers]
+  );
   const bankOptions = useMemo(() => banks.map((b) => ({ value: b })), [banks]);
   const isEdit = !!cheque;
 
@@ -62,6 +74,12 @@ export default function ChequeForm({
     setEntityName(name);
     const next = entities.find((e) => e.name.toLowerCase() === name.trim().toLowerCase());
     if (next?.id !== match?.id) setGrnIds([]);
+  };
+  // Picking a blank cheque's number fills in the creditor it was given to.
+  const onNumberChange = (value: string) => {
+    setChequeNumber(value);
+    const blank = availableNumbers.find((n) => n.cheque_number === value.trim() && n.entity_name);
+    if (blank?.entity_name && !entityName) onEntityChange(blank.entity_name);
   };
   const onGrnChange = (ids: string[]) => {
     setGrnIds(ids);
@@ -145,10 +163,17 @@ export default function ChequeForm({
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label htmlFor="cheque_number" className={label}>Cheque Number *</label>
-            <input
-              id="cheque_number" name="cheque_number" required defaultValue={cheque?.cheque_number ?? ''} placeholder="e.g. 004521" className={input}
-              {...(type === 'CREDIT' ? { inputMode: 'numeric' as const, pattern: '[0-9]{6}', maxLength: 6, title: 'Exactly 6 digits' } : {})}
-            />
+            {isDebit ? (
+              <Combobox
+                id="cheque_number" name="cheque_number" value={chequeNumber} onChange={onNumberChange} options={numberOptions} required
+                placeholder="Select or type a cheque number" emptyText="Not in the registered list — it will be used as typed"
+              />
+            ) : (
+              <input
+                id="cheque_number" name="cheque_number" required defaultValue={cheque?.cheque_number ?? ''} placeholder="e.g. 004521" className={input}
+                inputMode="numeric" pattern="[0-9]{6}" maxLength={6} title="Exactly 6 digits"
+              />
+            )}
           </div>
           <div>
             <label htmlFor="cheque_date" className={label}>Cheque Date *</label>
