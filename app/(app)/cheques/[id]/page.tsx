@@ -6,6 +6,7 @@ import { deleteCheque } from '@/actions/chequeActions';
 import { canDelete, canEdit, isAdmin, requireUser } from '@/lib/auth';
 import { getBankNames, getCheque } from '@/lib/data/cheques';
 import { getEntityOptions } from '@/lib/data/entities';
+import { getAvailableNumbers } from '@/lib/data/chequeNumbers';
 import { getChequeGrns, getGrnOptions } from '@/lib/data/grns';
 import { todayKey } from '@/lib/dates';
 import { isUuid } from '@/lib/filters';
@@ -28,11 +29,12 @@ export default async function ChequePage({ params }: PageProps<'/cheques/[id]'>)
   if (!cheque) notFound();
 
   const type = cheque.transaction_type;
-  const [entities, banks, grnOptions, chequeGrns] = await Promise.all([
+  const [entities, banks, grnOptions, chequeGrns, available] = await Promise.all([
     getEntityOptions(ENTITY_TYPE_FOR[type], cheque.entity_id),
     getBankNames(type),
     type === 'DEBIT' ? getGrnOptions(cheque.id) : Promise.resolve([]),
     type === 'DEBIT' ? getChequeGrns(cheque.id) : Promise.resolve([]),
+    type === 'DEBIT' ? getAvailableNumbers() : Promise.resolve([]),
   ]);
   const editable = canEdit(user, cheque.created_by);
   const back = type === 'CREDIT' ? '/receivables' : '/payables';
@@ -67,7 +69,7 @@ export default async function ChequePage({ params }: PageProps<'/cheques/[id]'>)
           )}
           <ChequeForm
             type={type} cheque={cheque} entities={entities} banks={banks} today={todayKey()} isAdmin={isAdmin(user)} readOnly={!editable}
-            grnOptions={grnOptions} initialGrnIds={chequeGrns.map((g) => g.purchase_id)}
+            grnOptions={grnOptions} initialGrnIds={chequeGrns.map((g) => g.purchase_id)} availableNumbers={available}
           />
         </div>
         <RecordHistory table="transactions" record={cheque} />

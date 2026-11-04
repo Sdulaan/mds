@@ -929,6 +929,43 @@ export const REPORTS: ReportDefinition[] = [
     },
   },
 
+  {
+    slug: 'blank-cheques',
+    title: 'Blank Cheques by Creditor',
+    group: 'Payables',
+    description: 'Blank cheques given to creditors that have not yet been assigned a cheque date and amount, with the cheque number issued to each creditor.',
+    params: ['entity'],
+    entityType: 'VENDOR',
+    async build(p) {
+      const params: unknown[] = [];
+      let creditor = '';
+      if (p.entityId) {
+        params.push(p.entityId);
+        creditor = 'AND cn.entity_id = $1';
+      }
+      const rows = await query(
+        `SELECT e.name AS entity_name, cn.cheque_number, cn.bank_name, cn.issued_date::text AS issued_date
+         FROM cheque_numbers cn JOIN entities e ON e.id = cn.entity_id
+         WHERE NOT EXISTS (SELECT 1 FROM transactions t WHERE t.transaction_type = 'DEBIT' AND t.cheque_number = cn.cheque_number)
+         ${creditor}
+         ORDER BY LOWER(e.name), cn.cheque_number`,
+        params
+      );
+      return {
+        title: this.title,
+        subtitle: p.entityId ? (await entityName(p.entityId)) ?? 'Creditor' : 'All creditors',
+        summary: [{ label: 'Blank cheques', value: rows.length.toLocaleString() }],
+        sections: [{
+          columns: [C.creditor, C.chequeNo, C.bank, { key: 'issued_date', label: 'Given On', type: 'date' }],
+          rows: [
+            ...rows.map((r) => ({ cells: { entity_name: r.entity_name, cheque_number: r.cheque_number, bank_name: r.bank_name, issued_date: r.issued_date } })),
+            { kind: 'total' as const, cells: { entity_name: `Total — ${plural(rows.length, 'blank cheque')}` } },
+          ],
+        }],
+      };
+    },
+  },
+
   // ── Registers (exports of the filtered cheque lists) ───────────────────────
   ...(['CREDIT', 'DEBIT'] as const).map((type): ReportDefinition => ({
     slug: type === 'CREDIT' ? 'customer-cheques' : 'creditor-cheques',
