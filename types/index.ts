@@ -139,7 +139,7 @@ export interface ChequeFilters {
   type: TransactionType;
   q?: string; // matches entity name, GRN, cheque number or amount
   status?: ChequeStatus | 'ALL';
-  entityId?: string;
+  entityIds?: string[];
   month?: string; // 'YYYY-MM' (cheque date)
   from?: string; // 'YYYY-MM-DD' (cheque date)
   to?: string;

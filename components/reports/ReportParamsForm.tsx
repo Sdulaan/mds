@@ -3,6 +3,7 @@ import { btnPrimary, cn, input } from '@/lib/ui';
 import PeriodPicker from '@/components/reports/PeriodPicker';
 import type { ReportDefinition, ReportParams } from '@/lib/reports/types';
 import DateInput from '@/components/DateInput';
+import { MultiSelectField } from '@/components/MultiSelect';
 
 interface ReportParamsFormProps {
   def: ReportDefinition;
@@ -76,10 +77,13 @@ export default function ReportParamsForm({ def, params, entities, banks, months 
       {has('entity') && (
         <div>
           <label htmlFor="r-entity" className={labelClass}>{def.entityType === 'CUSTOMER' ? 'Customer' : 'Creditor'}</label>
-          <select id="r-entity" name="entity" defaultValue={params.entityId ?? ''} className={cn(field, 'max-w-60')}>
-            <option value="">All</option>
-            {entities.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-          </select>
+          <div className="w-56">
+            <MultiSelectField
+              id="r-entity" name="entity" defaultSelected={params.entityIds}
+              options={entities.map((e) => ({ value: e.id, label: e.name }))}
+              allLabel="All" noun={def.entityType === 'CUSTOMER' ? 'customers' : 'creditors'}
+            />
+          </div>
         </div>
       )}
       {has('bank') && banks.length > 0 && (

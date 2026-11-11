@@ -11,7 +11,7 @@ export const BACKUP_VERSION = 1;
 const ENTITY_COLS = ['id', 'name', 'type', 'address', 'contact_number', 'email', 'credit_terms', 'opening_balance', 'remarks', 'is_active', 'created_at', 'created_by', 'updated_at', 'updated_by'];
 const CHEQUE_COLS = ['id', 'transaction_type', 'entity_id', 'cheque_number', 'cheque_date', 'amount', 'bank_name', 'grn_number', 'remarks', 'entry_date', 'deposited_date', 'cleared_date', 'returned_date', 'cancelled_date', 'created_at', 'created_by', 'updated_at', 'updated_by'];
 const CHEQUE_GRN_COLS = ['transaction_id', 'purchase_id', 'amount'];
-const CHEQUE_NUMBER_COLS = ['id', 'cheque_number', 'bank_name', 'entity_id', 'issued_date', 'created_at', 'created_by'];
+const CHEQUE_NUMBER_COLS = ['id', 'cheque_number', 'bank_name', 'entity_id', 'issued_date', 'created_at', 'created_by', 'book_start', 'cancelled_at', 'cancelled_by', 'cancel_reason', 'updated_at', 'updated_by'];
 const PURCHASE_COLS = ['id', 'entity_id', 'grn_number', 'invoice_number', 'purchase_date', 'amount', 'remarks', 'created_at', 'created_by', 'updated_at', 'updated_by'];
 
 export interface Backup {
@@ -75,7 +75,7 @@ export function validateBackup(data: unknown): data is Backup {
 export async function restoreBackup(b: Backup): Promise<void> {
   // Keep user references only where that user still exists.
   const col = (c: string) =>
-    c === 'created_by' || c === 'updated_by' ? `(SELECT u.id FROM users u WHERE u.id = r.${c})` : `r.${c}`;
+    c === 'created_by' || c === 'updated_by' || c === 'cancelled_by' ? `(SELECT u.id FROM users u WHERE u.id = r.${c})` : `r.${c}`;
   const insert = (table: string, cols: string[]) =>
     `INSERT INTO ${table} (${cols.join(', ')}) SELECT ${cols.map(col).join(', ')} FROM json_populate_recordset(NULL::${table}, $1::json) r`;
 

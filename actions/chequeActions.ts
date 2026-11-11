@@ -152,6 +152,23 @@ export async function saveCheque(_prev: ActionResult, formData: FormData): Promi
       : [];
     const grnNumber = type === 'DEBIT' ? allocations.map((a) => a.grn.grn_number).join(', ') : null;
 
+    // A creditor cheque number can belong to one creditor only: refuse a number that is cancelled, or
+    // already given to another creditor as a blank cheque or used on another creditor's cheque.
+    if (type === 'DEBIT') {
+      const [reg] = await sql`
+        SELECT cn.cancelled_at, cn.entity_id, e.name AS entity_name FROM cheque_numbers cn
+        LEFT JOIN entities e ON e.id = cn.entity_id WHERE cn.cheque_number = ${chequeNumber}`;
+      if (reg?.cancelled_at) return { success: false, message: `Cheque number ${chequeNumber} has been cancelled and cannot be used.` };
+      if (reg?.entity_id && reg.entity_id !== entityId) {
+        return { success: false, message: `Cheque number ${chequeNumber} is already assigned to ${reg.entity_name}. A cheque number can only be used for one creditor.` };
+      }
+      const [other] = await sql`
+        SELECT e.name FROM transactions t JOIN entities e ON e.id = t.entity_id
+        WHERE t.transaction_type = 'DEBIT' AND t.cheque_number = ${chequeNumber} AND t.entity_id <> ${entityId}
+          AND t.id <> ${isEdit ? id : '00000000-0000-0000-0000-000000000000'} LIMIT 1`;
+      if (other) return { success: false, message: `Cheque number ${chequeNumber} is already used on a cheque for ${other.name}. A cheque number can only be used for one creditor.` };
+    }
+
     // SRS §7 duplicate control: warn with the earlier cheque's details. Creditor cheques can only be
     // overridden by administrators; a repeated customer cheque number may be saved by anyone after the warning.
     const duplicates = await findDuplicates({ type, entityId, chequeNumber, bankName, excludeId: isEdit ? id : undefined });

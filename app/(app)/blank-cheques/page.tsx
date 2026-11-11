@@ -4,27 +4,35 @@ import { Printer, Undo2 } from 'lucide-react';
 import { releaseBlankCheque } from '@/actions/chequeNumberActions';
 import { requireUser } from '@/lib/auth';
 import { getBankNames } from '@/lib/data/cheques';
-import { getBlankCheques, getAvailableNumbers, toRanges } from '@/lib/data/chequeNumbers';
+import { getBlankCheques, getAvailableNumbers, getCancelledNumbers, toBooks } from '@/lib/data/chequeNumbers';
 import { getEntityOptions } from '@/lib/data/entities';
 import { formatDate } from '@/lib/dates';
 import { btnPrimary, btnSecondary, btnSmall, card, td, th } from '@/lib/ui';
 import ConfirmButton from '@/components/ConfirmButton';
 import PageHeader from '@/components/PageHeader';
 import { GenerateNumbers, RecordBlankCheque } from '@/components/cheques/BlankChequeForms';
+import { CancelledList, CancelNumberButton, ChequeBookList } from '@/components/cheques/ChequeBookList';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Blank Cheques' };
 
 export default async function BlankChequesPage() {
   await requireUser();
-  const [blanks, available, creditors, banks] = await Promise.all([
+  const [blanks, available, cancelled, creditors, banks] = await Promise.all([
     getBlankCheques(),
     getAvailableNumbers(),
+    getCancelledNumbers(),
     getEntityOptions('VENDOR'),
     getBankNames('DEBIT'),
   ]);
   const stock = available.filter((n) => !n.entity_id);
-  const ranges = toRanges(stock.map((n) => n.cheque_number));
+  const books = toBooks(stock).map((b) => ({
+    start: b.start,
+    size: b.size,
+    left: b.left,
+    rangeLabels: b.ranges.map((x) => (x.count > 1 ? `${x.from} – ${x.to}` : x.from)),
+    numbers: b.numbers.map((n) => ({ id: n.id, number: n.cheque_number, bank: n.bank_name })),
+  }));
 
   return (
     <div>
@@ -80,6 +88,7 @@ export default async function BlankChequesPage() {
                             >
                               <Undo2 className="h-3.5 w-3.5" /> Remove
                           </ConfirmButton>
+                          <CancelNumberButton id={b.id} number={b.cheque_number} />
                         </div>
                       </td>
                     </tr>
@@ -95,19 +104,26 @@ export default async function BlankChequesPage() {
         <h2 className="mb-3 text-lg font-semibold text-fg">
           Available cheque numbers <span className="text-sm font-normal text-muted">· {stock.length.toLocaleString()} in stock</span>
         </h2>
-        {ranges.length === 0 ? (
+        {books.length === 0 ? (
           <p className={`${card} py-12 text-center text-sm text-subtle`}>No unused generated cheque numbers.</p>
         ) : (
-          <ul className={`${card} divide-y divide-line text-sm`}>
-            {ranges.map((r) => (
-              <li key={r.from} className="flex items-center justify-between gap-4 px-4 py-2.5">
-                <span className="tabular-nums text-fg">{r.count > 1 ? `${r.from} – ${r.to}` : r.from}</span>
-                <span className="text-muted">{r.count.toLocaleString()} cheque{r.count === 1 ? '' : 's'}</span>
-              </li>
-            ))}
-          </ul>
+          <>
+            <p className="mb-2 text-xs text-muted">Each cheque book holds 50 cheques. Open a book to edit or cancel a number.</p>
+            <ChequeBookList books={books} />
+          </>
         )}
       </section>
+
+      {cancelled.length > 0 && (
+        <section className="mt-8">
+          <h2 className="mb-3 text-lg font-semibold text-fg">
+            Cancelled cheque numbers <span className="text-sm font-normal text-muted">· {cancelled.length.toLocaleString()}</span>
+          </h2>
+          <CancelledList
+            rows={cancelled.map((c) => ({ id: c.id, number: c.cheque_number, bank: c.bank_name, reason: c.cancel_reason, cancelledOn: c.cancelled_at ? formatDate(c.cancelled_at.slice(0, 10)) : '' }))}
+          />
+        </section>
+      )}
     </div>
   );
 }
