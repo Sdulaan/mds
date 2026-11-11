@@ -51,7 +51,7 @@ export type ParamKind = 'dateRange' | 'entity' | 'bank' | 'month' | 'monthOrRang
 export interface ReportParams {
   from?: string;
   to?: string;
-  entityId?: string;
+  entityIds?: string[];
   bank?: string;
   month?: string;
   period?: 'month' | 'quarter' | 'year';

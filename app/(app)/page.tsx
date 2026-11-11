@@ -149,7 +149,7 @@ async function DashboardContent() {
         </div>
         <section className={`${card} mt-4 p-5`}>
           <h3 className="text-base font-semibold text-fg">Uncleared cheques by creditor</h3>
-          <p className="mb-4 text-xs text-muted">Top 10 creditors by uncleared cheque value · amount · number of cheques</p>
+          <p className="mb-4 text-xs text-muted">Top 10 creditors by uncleared cheque value</p>
           <RankedBars data={p.topCreditors} barClass="bg-debit" />
         </section>
       </section>

@@ -8,33 +8,50 @@ import { cn, input } from '@/lib/ui';
 interface DateInputProps {
   id?: string;
   /** Submitted as 'YYYY-MM-DD' (empty until a full valid date is typed). */
-  name: string;
+  name?: string;
   /** 'YYYY-MM-DD' */
   defaultValue?: string | null;
   required?: boolean;
   disabled?: boolean;
   className?: string;
+  /** Called with 'YYYY-MM-DD' once a full valid date is typed or picked, or undefined when cleared. */
+  onValueChange?: (iso: string | undefined) => void;
   'aria-label'?: string;
 }
 
 /** Date field typed as DD/MM/YYYY (browser date pickers follow the OS locale); submits ISO. */
-export default function DateInput({ id, name, defaultValue, required, disabled, className, 'aria-label': ariaLabel }: DateInputProps) {
+export default function DateInput({ id, name, defaultValue, required, disabled, className, onValueChange, 'aria-label': ariaLabel }: DateInputProps) {
   const [text, setText] = useState(isoToDmy(defaultValue));
+  const [synced, setSynced] = useState(defaultValue ?? '');
+  // Follow external changes (e.g. a filter's Clear button) without disturbing what is being typed.
+  if ((defaultValue ?? '') !== synced) {
+    setSynced(defaultValue ?? '');
+    if ((dmyToIso(text) ?? '') !== (defaultValue ?? '')) setText(isoToDmy(defaultValue));
+  }
+  const update = (v: string) => {
+    setText(v);
+    if (!onValueChange) return;
+    if (v.trim() === '') onValueChange(undefined);
+    else {
+      const d = dmyToIso(v);
+      if (d) onValueChange(d);
+    }
+  };
   const iso = dmyToIso(text) ?? '';
   const invalid = text !== '' && !iso;
   const pickerRef = useRef<HTMLInputElement>(null);
-  // Opens the browser's calendar under the field. Throws when the browser forbids it (e.g. focus by
-  // Tab without a user gesture); the field stays typeable either way.
+  // Opens the browser's calendar only from the calendar button: opening it on focus/click of the text
+  // box grabbed the keyboard and stopped people typing the date. Throws if the browser forbids it.
   const openPicker = () => {
     if (disabled) return;
     try { pickerRef.current?.showPicker(); } catch { /* typing still works */ }
   };
   return (
     <div className="relative w-full">
-      <input type="hidden" name={name} value={iso} disabled={disabled} />
+      {name && <input type="hidden" name={name} value={iso} disabled={disabled} />}
       <input
-        id={id} value={text} onChange={(e) => setText(e.target.value)} required={required} disabled={disabled}
-        onClick={openPicker} onFocus={openPicker} autoComplete="off"
+        id={id} value={text} onChange={(e) => update(e.target.value)} required={required} disabled={disabled}
+        autoComplete="off"
         inputMode="numeric" maxLength={10} placeholder="DD/MM/YYYY" aria-label={ariaLabel} aria-invalid={invalid || undefined}
         title="Use DD/MM/YYYY" pattern="\d{1,2}/\d{1,2}/\d{4}"
         className={cn(input, 'pr-10', className, invalid && text.length >= 10 && 'border-bounced')}
@@ -42,7 +59,7 @@ export default function DateInput({ id, name, defaultValue, required, disabled, 
       {/* Hidden native date field: supplies the calendar popup, anchored below the text box. */}
       <input
         ref={pickerRef} type="date" tabIndex={-1} aria-hidden="true" disabled={disabled} value={iso}
-        onChange={(e) => setText(isoToDmy(e.target.value))}
+        onChange={(e) => update(isoToDmy(e.target.value))}
         className="pointer-events-none absolute inset-x-0 bottom-0 h-0 w-full opacity-0"
       />
       <button

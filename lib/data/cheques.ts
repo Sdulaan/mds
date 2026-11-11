@@ -32,7 +32,7 @@ export function chequeWhere(filters: ChequeFilters, params: unknown[]): string {
   const conditions = [`t.transaction_type = ${add(filters.type)}`];
 
   if (filters.status && filters.status !== 'ALL') conditions.push(`t.status = ${add(filters.status)}`);
-  if (filters.entityId) conditions.push(`t.entity_id = ${add(filters.entityId)}`);
+  if (filters.entityIds?.length) conditions.push(`t.entity_id = ANY(${add(filters.entityIds)}::uuid[])`);
   if (filters.bank) conditions.push(`t.bank_name ILIKE ${add(filters.bank)}`);
   if (filters.month) {
     const p = add(`${filters.month}-01`);

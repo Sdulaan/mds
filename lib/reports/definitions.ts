@@ -24,17 +24,19 @@ function groupBy<T>(rows: T[], key: (r: T) => string): Map<string, T[]> {
   return map;
 }
 
-async function entityName(id?: string): Promise<string | undefined> {
-  if (!id) return undefined;
-  const [row] = await query('SELECT name FROM entities WHERE id = $1', [id]);
-  return row?.name;
+/** Names of the selected entities for report subtitles ("A, B" or "5 selected"). */
+async function entityNames(ids?: string[]): Promise<string | undefined> {
+  if (!ids?.length) return undefined;
+  const rows = await query('SELECT name FROM entities WHERE id = ANY($1::uuid[]) ORDER BY LOWER(name)', [ids]);
+  if (rows.length === 0) return undefined;
+  return rows.length <= 3 ? rows.map((r) => r.name).join(', ') : `${rows.length} selected`;
 }
 
 async function describe(p: ReportParams, extra: string[] = []): Promise<string> {
   const parts: string[] = [];
   if (p.from || p.to) parts.push(`${p.from ? formatDate(p.from) : 'Beginning'} – ${p.to ? formatDate(p.to) : 'Today'}`);
   if (p.month) parts.push(monthLabel(p.month));
-  const name = await entityName(p.entityId);
+  const name = await entityNames(p.entityIds);
   if (name) parts.push(name);
   if (p.bank) parts.push(p.bank);
   parts.push(...extra);
@@ -52,7 +54,7 @@ async function fetchCheques(type: TransactionType, conditions: string[], params:
 function standardConditions(p: ReportParams, dateColumn: string, params: unknown[]): string[] {
   const c: string[] = [];
   const add = (v: unknown) => (params.push(v), `$${params.length}`);
-  if (p.entityId) c.push(`t.entity_id = ${add(p.entityId)}`);
+  if (p.entityIds?.length) c.push(`t.entity_id = ANY(${add(p.entityIds)}::uuid[])`);
   if (p.bank) c.push(`t.bank_name ILIKE ${add(p.bank)}`);
   if (p.from) c.push(`${dateColumn} >= ${add(p.from)}::date`);
   if (p.to) c.push(`${dateColumn} <= ${add(p.to)}::date`);
@@ -170,7 +172,7 @@ async function dailyPendingSummary(type: TransactionType, p: ReportParams, label
   const pending = type === 'CREDIT'
     ? `(t.cleared_date IS NULL OR t.cleared_date > $2::date) AND (t.returned_date IS NULL OR t.returned_date > $2::date)`
     : `(t.cleared_date IS NULL OR t.cleared_date > $2::date) AND (t.cancelled_date IS NULL OR t.cancelled_date > $2::date)`;
-  const extra = standardConditions({ entityId: p.entityId, bank: p.bank }, 't.cheque_date', params);
+  const extra = standardConditions({ entityIds: p.entityIds, bank: p.bank }, 't.cheque_date', params);
   const rows = await query(
     `SELECT d::date::text AS day, COUNT(t.id)::int AS count, COALESCE(SUM(t.amount), 0) AS amount
      FROM generate_series($1::date, $2::date, INTERVAL '1 day') AS d
@@ -192,7 +194,7 @@ async function dailyPendingSummary(type: TransactionType, p: ReportParams, label
     ],
   }));
   return {
-    subtitle: [label, await entityName(p.entityId), p.bank].filter(Boolean).join(' · '),
+    subtitle: [label, await entityNames(p.entityIds), p.bank].filter(Boolean).join(' · '),
     summary: [
       { label: labels[0], value: count.toLocaleString() },
       { label: labels[1], value: formatAmount(total) },
@@ -558,10 +560,11 @@ export const REPORTS: ReportDefinition[] = [
       const start = byDate ? (p.from && p.from <= end ? p.from : `${end.slice(0, 7)}-01`) : `${startMonth}-01`;
 
       const params: unknown[] = [start, end];
-      const entityCond = p.entityId ? (params.push(p.entityId), `AND e.id = $3`) : '';
+      const entityCond = p.entityIds?.length ? (params.push(p.entityIds), `AND e.id = ANY($3::uuid[])`) : '';
       // Payments = cheques cleared in the period: a cheque is only paid once the bank clears it, so a
       // cheque that stays uncleared and is later cancelled never counts, and past periods never change.
-      // Uncleared = cheques issued by the period end and not cleared or cancelled by then (for information).
+      // Uncleared = cheques issued (entered) by the period end and not cleared or cancelled by then, including post-dated
+      // cheques whose cheque date falls after the period (for information).
       const rows = await query(
         `SELECT e.name, e.is_active,
            e.opening_balance
@@ -569,7 +572,7 @@ export const REPORTS: ReportDefinition[] = [
              - COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.entity_id = e.id AND t.transaction_type = 'DEBIT' AND t.cleared_date < $1), 0) AS opening,
            COALESCE((SELECT SUM(amount) FROM purchases p WHERE p.entity_id = e.id AND p.purchase_date BETWEEN $1 AND $2), 0) AS purchases,
            COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.entity_id = e.id AND t.transaction_type = 'DEBIT' AND t.cleared_date BETWEEN $1 AND $2), 0) AS payments,
-           COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.entity_id = e.id AND t.transaction_type = 'DEBIT' AND t.cheque_date <= $2
+           COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.entity_id = e.id AND t.transaction_type = 'DEBIT' AND t.entry_date <= $2
                        AND (t.cleared_date IS NULL OR t.cleared_date > $2) AND (t.cancelled_date IS NULL OR t.cancelled_date > $2)), 0) AS uncleared
          FROM entities e WHERE e.type = 'VENDOR' ${entityCond}
          ORDER BY LOWER(e.name)`,
@@ -586,7 +589,7 @@ export const REPORTS: ReportDefinition[] = [
       const periodLabel = byDate ? `${formatDate(start)} – ${formatDate(end)}` : period === 'month' ? monthLabel(startMonth) : `${monthLabel(startMonth, 'short')} – ${monthLabel(endMonth, 'short')}`;
       return {
         title: this.title,
-        subtitle: [`${byDate ? 'Date range' : period === 'year' ? 'Annual' : period === 'quarter' ? 'Quarterly' : 'Monthly'}: ${periodLabel}`, await entityName(p.entityId)].filter(Boolean).join(' · '),
+        subtitle: [`${byDate ? 'Date range' : period === 'year' ? 'Annual' : period === 'quarter' ? 'Quarterly' : 'Monthly'}: ${periodLabel}`, await entityNames(p.entityIds)].filter(Boolean).join(' · '),
         summary: [
           { label: 'Opening balance', value: formatAmount(t.opening) },
           { label: 'Purchases', value: formatAmount(t.purchases) },
@@ -679,7 +682,8 @@ export const REPORTS: ReportDefinition[] = [
     title: 'Creditor Payables Summary',
     group: 'Summary',
     description: 'Each creditor with their outstanding balance at the end of the chosen month or date range (opening balance + purchases − cleared cheques), with a total.',
-    params: ['monthOrRange'],
+    params: ['monthOrRange', 'entity'],
+    entityType: 'VENDOR',
     defaults: () => ({ mode: 'month', month: currentMonthKey() }),
     async build(p) {
       const byDate = p.mode === 'date' || (!p.month && !!(p.from || p.to));
@@ -693,9 +697,9 @@ export const REPORTS: ReportDefinition[] = [
              - COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.entity_id = e.id AND t.transaction_type = 'DEBIT' AND t.cleared_date < $1), 0) AS opening,
            COALESCE((SELECT SUM(amount) FROM purchases p WHERE p.entity_id = e.id AND p.purchase_date BETWEEN $1 AND $2), 0) AS purchases,
            COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.entity_id = e.id AND t.transaction_type = 'DEBIT' AND t.cleared_date BETWEEN $1 AND $2), 0) AS paid
-         FROM entities e WHERE e.type = 'VENDOR'
+         FROM entities e WHERE e.type = 'VENDOR' ${p.entityIds?.length ? 'AND e.id = ANY($3::uuid[])' : ''}
          ORDER BY LOWER(e.name)`,
-        [start, end]
+        p.entityIds?.length ? [start, end, p.entityIds] : [start, end]
       );
       const data = rows
         .map((r) => {
@@ -706,7 +710,7 @@ export const REPORTS: ReportDefinition[] = [
       const total = sum(data, (r) => r.outstanding);
       return {
         title: this.title,
-        subtitle: byDate ? `${formatDate(start)} – ${formatDate(end)}` : monthLabel(month),
+        subtitle: [byDate ? `${formatDate(start)} – ${formatDate(end)}` : monthLabel(month), await entityNames(p.entityIds)].filter(Boolean).join(' · '),
         summary: [
           { label: 'Creditors', value: data.length.toLocaleString() },
           { label: 'Total outstanding', value: formatAmount(total) },
@@ -741,7 +745,7 @@ export const REPORTS: ReportDefinition[] = [
     async build(p) {
       const { start, end, label } = summaryPeriod(p);
       const params: unknown[] = [start, end];
-      const entityCond = p.entityId ? (params.push(p.entityId), 'AND p.entity_id = $3') : '';
+      const entityCond = p.entityIds?.length ? (params.push(p.entityIds), 'AND p.entity_id = ANY($3::uuid[])') : '';
       const rows = await query(
         `SELECT e.name, e.is_active, p.id AS purchase_id, p.grn_number, p.invoice_number, p.purchase_date::text AS purchase_date,
                 p.amount AS invoice_amount, t.cheque_number, t.cheque_date::text AS cheque_date, g.amount AS applied
@@ -775,7 +779,7 @@ export const REPORTS: ReportDefinition[] = [
       const paid = sum(rows, (r) => r.applied);
       return {
         title: this.title,
-        subtitle: [label, await entityName(p.entityId)].filter(Boolean).join(' · '),
+        subtitle: [label, await entityNames(p.entityIds)].filter(Boolean).join(' · '),
         summary: [
           { label: 'GRNs', value: seen.size.toLocaleString() },
           { label: 'Invoice amount', value: formatAmount(invoiced) },
@@ -939,21 +943,21 @@ export const REPORTS: ReportDefinition[] = [
     async build(p) {
       const params: unknown[] = [];
       let creditor = '';
-      if (p.entityId) {
-        params.push(p.entityId);
-        creditor = 'AND cn.entity_id = $1';
+      if (p.entityIds?.length) {
+        params.push(p.entityIds);
+        creditor = 'AND cn.entity_id = ANY($1::uuid[])';
       }
       const rows = await query(
         `SELECT e.name AS entity_name, cn.cheque_number, cn.bank_name, cn.issued_date::text AS issued_date
          FROM cheque_numbers cn JOIN entities e ON e.id = cn.entity_id
-         WHERE NOT EXISTS (SELECT 1 FROM transactions t WHERE t.transaction_type = 'DEBIT' AND t.cheque_number = cn.cheque_number)
+         WHERE cn.cancelled_at IS NULL AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.transaction_type = 'DEBIT' AND t.cheque_number = cn.cheque_number)
          ${creditor}
          ORDER BY LOWER(e.name), cn.cheque_number`,
         params
       );
       return {
         title: this.title,
-        subtitle: p.entityId ? (await entityName(p.entityId)) ?? 'Creditor' : 'All creditors',
+        subtitle: (await entityNames(p.entityIds)) ?? 'All creditors',
         summary: [{ label: 'Blank cheques', value: rows.length.toLocaleString() }],
         sections: [{
           columns: [C.creditor, C.chequeNo, C.bank, { key: 'issued_date', label: 'Given On', type: 'date' }],
@@ -989,7 +993,7 @@ export const REPORTS: ReportDefinition[] = [
         : [C.grn, C.creditor, C.chequeNo, C.chequeDate, C.bank, C.amount, C.status, { key: 'status_date', label: 'Status Date', type: 'date' }, { key: 'entry_date', label: 'Entry Date', type: 'date' }, { key: 'remarks', label: 'Remarks' }];
       return {
         title: this.title,
-        subtitle: buildFilterLabel(filters, await entityName(filters.entityId)),
+        subtitle: buildFilterLabel(filters, await entityNames(filters.entityIds)),
         summary: [{ label: 'Total', value: `${formatAmount(sum(rows, (r) => r.amount))} (${rows.length})` }, ...byStatus],
         sections: [{
           columns,

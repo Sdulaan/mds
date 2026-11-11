@@ -59,10 +59,17 @@ export default function ChequeForm({
   const match = entities.find((e) => e.name.toLowerCase() === entityName.trim().toLowerCase());
   const entityOptions = useMemo(() => entities.map((e) => ({ value: e.name, hint: e.is_active ? undefined : 'Inactive' })), [entities]);
   const newEntityHref = type === 'CREDIT' ? '/customers/new' : '/creditors/new';
+  // A number already given to another creditor as a blank cheque can't be used here: hide it once a
+  // creditor is chosen (the server refuses it too).
   const numberOptions = useMemo(
-    () => availableNumbers.map((n) => ({ value: n.cheque_number, hint: n.entity_name ?? undefined })),
-    [availableNumbers]
+    () => availableNumbers
+      .filter((n) => !n.entity_name || !entityName.trim() || n.entity_name.toLowerCase() === entityName.trim().toLowerCase())
+      .map((n) => ({ value: n.cheque_number, hint: n.entity_name ?? undefined })),
+    [availableNumbers, entityName]
   );
+  const takenBy = availableNumbers.find(
+    (n) => n.cheque_number === chequeNumber.trim() && n.entity_name && entityName.trim() && n.entity_name.toLowerCase() !== entityName.trim().toLowerCase()
+  )?.entity_name;
   const bankOptions = useMemo(() => banks.map((b) => ({ value: b })), [banks]);
   const isEdit = !!cheque;
 
@@ -164,10 +171,15 @@ export default function ChequeForm({
           <div>
             <label htmlFor="cheque_number" className={label}>Cheque Number *</label>
             {isDebit ? (
+              <>
               <Combobox
                 id="cheque_number" name="cheque_number" value={chequeNumber} onChange={onNumberChange} options={numberOptions} required
                 placeholder="Select or type a cheque number" emptyText="Not in the registered list — it will be used as typed"
               />
+              {takenBy && (
+                <p className="mt-1.5 text-xs text-bounced">Cheque {chequeNumber.trim()} is already recorded as a blank cheque for {takenBy}. Choose a different number.</p>
+              )}
+              </>
             ) : (
               <input
                 id="cheque_number" name="cheque_number" required defaultValue={cheque?.cheque_number ?? ''} placeholder="e.g. 004521" className={input}

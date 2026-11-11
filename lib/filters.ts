@@ -11,6 +11,12 @@ export function pick(params: RawParams, key: string): string | undefined {
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export function pickAll(params: RawParams, key: string): string[] {
+  if (params instanceof URLSearchParams) return params.getAll(key);
+  const v = params[key];
+  return v === undefined ? [] : Array.isArray(v) ? v : [v];
+}
+
 export const isUuid = (v: string | undefined | null): v is string => !!v && UUID_RE.test(v);
 export const isDateKey = (v: string | undefined | null): v is string => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
@@ -27,7 +33,7 @@ export function parseChequeFilters(params: RawParams, type: TransactionType): Ch
     type,
     q: q || undefined,
     status: STATUSES_FOR[type].includes(status as ChequeStatus) ? (status as ChequeStatus) : 'ALL',
-    entityId: isUuid(pick(params, 'entity')) ? pick(params, 'entity') : undefined,
+    entityIds: ((ids) => (ids.length ? ids : undefined))([...new Set(pickAll(params, 'entity').filter(isUuid))].slice(0, 200)),
     month: isMonthKey(pick(params, 'month')) ? pick(params, 'month') : undefined,
     from: isDateKey(pick(params, 'from')) ? pick(params, 'from') : undefined,
     to: isDateKey(pick(params, 'to')) ? pick(params, 'to') : undefined,
@@ -40,7 +46,7 @@ export function filtersToQuery(filters: Partial<ChequeFilters>): string {
   const params = new URLSearchParams();
   if (filters.q) params.set('q', filters.q);
   if (filters.status && filters.status !== 'ALL') params.set('status', filters.status);
-  if (filters.entityId) params.set('entity', filters.entityId);
+  for (const id of filters.entityIds ?? []) params.append('entity', id);
   if (filters.month) params.set('month', filters.month);
   if (filters.from) params.set('from', filters.from);
   if (filters.to) params.set('to', filters.to);

@@ -1,9 +1,10 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { sql } from '@/lib/db';
+import { sql, transaction } from '@/lib/db';
 import { canDelete, canEdit, getCurrentUser } from '@/lib/auth';
 import { diff, logAudit } from '@/lib/audit';
+import { formatDate } from '@/lib/dates';
 import { isUuid } from '@/lib/filters';
 import { formatAmount } from '@/lib/format';
 import { FORBIDDEN, FormError, UNAUTHORIZED, money, optionalDate, optionalText, text } from '@/lib/forms';
@@ -39,6 +40,15 @@ export async function savePurchase(_prev: ActionResult, formData: FormData): Pro
 
     const [entity] = await sql`SELECT name, type FROM entities WHERE id = ${entityId}`;
     if (!entity || entity.type !== 'VENDOR') return { success: false, message: 'Please select a creditor.' };
+
+    // Duplicate control: a creditor can't have two GRNs with the same number.
+    const [dup] = await sql`
+      SELECT id, purchase_date::text AS purchase_date FROM purchases
+      WHERE entity_id = ${entityId} AND LOWER(TRIM(grn_number)) = LOWER(${grnNumber}) AND id <> ${existing ? id : '00000000-0000-0000-0000-000000000000'}
+      LIMIT 1`;
+    if (dup) {
+      return { success: false, message: `GRN ${grnNumber} already exists for ${entity.name} (dated ${formatDate(dup.purchase_date)}). Duplicate GRN numbers are not allowed — check the number or edit the existing GRN.` };
+    }
 
     // GRNs already on cheques: the creditor can't change, and a lower amount (goods returned)
     // leaves the GRN over-paid until the old cheque is cancelled.
@@ -95,16 +105,23 @@ export async function deletePurchase(id: string): Promise<ActionResult> {
   if (!canDelete(user)) return FORBIDDEN;
   if (!isUuid(id)) return { success: false, message: 'Purchase not found.' };
 
-  const [linked] = await sql`SELECT COUNT(*)::int AS n FROM cheque_grns WHERE purchase_id = ${id}`;
+  // Cancelled cheques no longer pay anything, so they don't block deleting the GRN; only live cheques do.
+  const [linked] = await sql`
+    SELECT COUNT(*)::int AS n FROM cheque_grns g JOIN transactions t ON t.id = g.transaction_id
+    WHERE g.purchase_id = ${id} AND t.status <> 'CANCELLED'`;
   if (linked?.n) {
-    return { success: false, message: 'This GRN is on a cheque, so it cannot be deleted. Edit or delete the cheque first.' };
+    return { success: false, message: 'This GRN is on an active cheque, so it cannot be deleted. Cancel or delete the cheque first.' };
   }
 
   const [row] = await sql`
-    DELETE FROM purchases p USING entities e WHERE p.id = ${id} AND e.id = p.entity_id
-    RETURNING p.grn_number, p.amount, e.name AS entity_name
+    SELECT p.grn_number, p.amount, e.name AS entity_name FROM purchases p JOIN entities e ON e.id = p.entity_id WHERE p.id = ${id}
   `;
   if (!row) return { success: false, message: 'Purchase not found.' };
+  // Drop the links to cancelled cheques and delete the GRN together.
+  await transaction([
+    { text: 'DELETE FROM cheque_grns WHERE purchase_id = $1', params: [id] },
+    { text: 'DELETE FROM purchases WHERE id = $1', params: [id] },
+  ]);
   await logAudit({
     table: 'purchases', recordId: id, action: 'DELETE', user,
     summary: `Deleted purchase ${row.grn_number ?? ''} — ${row.entity_name}, ${formatAmount(row.amount)}`,

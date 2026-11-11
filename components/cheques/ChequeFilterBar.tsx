@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { Loader2, Search, X } from 'lucide-react';
-import { dmyToIso, isoToDmy } from '@/lib/dates';
+import DateInput from '@/components/DateInput';
+import MultiSelect from '@/components/MultiSelect';
 import { filtersToQuery } from '@/lib/filters';
 import { btnSecondary, cn, input } from '@/lib/ui';
 import { STATUSES_FOR, STATUS_LABEL, type ChequeFilters, type TransactionType } from '@/types';
@@ -41,7 +42,7 @@ export default function ChequeFilterBar({ type, filters, entities, banks, months
 
   const select = cn(input, 'w-auto min-w-0 cursor-pointer py-2');
   const labelClass = 'mb-1 block text-xs font-medium text-muted';
-  const hasFilters = Boolean(filters.q || (filters.status && filters.status !== 'ALL') || filters.entityId || filters.month || filters.from || filters.to || filters.bank);
+  const hasFilters = Boolean(filters.q || (filters.status && filters.status !== 'ALL') || filters.entityIds?.length || filters.month || filters.from || filters.to || filters.bank);
 
   return (
     <div className="space-y-3">
@@ -70,12 +71,12 @@ export default function ChequeFilterBar({ type, filters, entities, banks, months
         </div>
         <div>
           <label htmlFor="f-entity" className={labelClass}>{entityLabel}</label>
-          <select id="f-entity" value={filters.entityId ?? ''} onChange={(e) => apply({ entityId: e.target.value || undefined })} className={cn(select, 'max-w-56')}>
-            <option value="">All</option>
-            {entities.map((e) => (
-              <option key={e.id} value={e.id}>{e.name}</option>
-            ))}
-          </select>
+          <div className="w-56">
+            <MultiSelect
+              id="f-entity" selected={filters.entityIds ?? []} onChange={(ids) => apply({ entityIds: ids.length ? ids : undefined })}
+              options={entities.map((e) => ({ value: e.id, label: e.name }))} allLabel="All" noun={`${entityLabel.toLowerCase()}s`}
+            />
+          </div>
         </div>
         <div>
           <label htmlFor="f-month" className={labelClass}>Month</label>
@@ -88,11 +89,11 @@ export default function ChequeFilterBar({ type, filters, entities, banks, months
         </div>
         <div>
           <label htmlFor="f-from" className={labelClass}>From</label>
-          <FilterDate id="f-from" value={filters.from} onChange={(from) => apply({ from })} />
+          <div className="w-40"><FilterDate id="f-from" value={filters.from} onChange={(from) => apply({ from })} /></div>
         </div>
         <div>
           <label htmlFor="f-to" className={labelClass}>To</label>
-          <FilterDate id="f-to" value={filters.to} onChange={(to) => apply({ to })} />
+          <div className="w-40"><FilterDate id="f-to" value={filters.to} onChange={(to) => apply({ to })} /></div>
         </div>
         {banks.length > 0 && (
           <div>
@@ -122,29 +123,7 @@ export default function ChequeFilterBar({ type, filters, entities, banks, months
   );
 }
 
-/** DD/MM/YYYY text filter: applies once a full valid date is typed, or when cleared. */
+/** DD/MM/YYYY filter with a calendar button: applies once a full valid date is typed/picked, or when cleared. */
 function FilterDate({ id, value, onChange }: { id: string; value?: string; onChange: (iso: string | undefined) => void }) {
-  const [text, setText] = useState(isoToDmy(value));
-  const [synced, setSynced] = useState(value);
-  // Follow external changes (e.g. the Clear button).
-  if (value !== synced) {
-    setSynced(value);
-    setText(isoToDmy(value));
-  }
-  const invalid = text !== '' && text.length >= 10 && !dmyToIso(text);
-  return (
-    <input
-      id={id} value={text} inputMode="numeric" maxLength={10} placeholder="DD/MM/YYYY" aria-invalid={invalid || undefined}
-      onChange={(e) => {
-        const v = e.target.value;
-        setText(v);
-        if (v.trim() === '') onChange(undefined);
-        else {
-          const iso = dmyToIso(v);
-          if (iso) onChange(iso);
-        }
-      }}
-      className={cn(input, 'w-36 py-2', invalid && 'border-bounced')}
-    />
-  );
+  return <DateInput id={id} defaultValue={value} onValueChange={onChange} className="py-2" />;
 }

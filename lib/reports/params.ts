@@ -12,7 +12,7 @@ export function parseReportParams(def: ReportDefinition, raw: URLSearchParams): 
   const base = touched ? {} : (def.defaults?.() ?? {});
   const from = raw.get('from');
   const to = raw.get('to');
-  const entity = raw.get('entity');
+  const entityIds = [...new Set(raw.getAll('entity').filter(isUuid))].slice(0, 200);
   const month = raw.get('month');
   const period = raw.get('period');
   const bank = raw.get('bank')?.trim().slice(0, 100);
@@ -23,7 +23,7 @@ export function parseReportParams(def: ReportDefinition, raw: URLSearchParams): 
     ...base,
     ...(isDateKey(from) && { from }),
     ...(isDateKey(to) && { to }),
-    ...(isUuid(entity) && { entityId: entity }),
+    ...(entityIds.length > 0 && { entityIds }),
     ...(bank && { bank }),
     ...(isMonthKey(month) && { month }),
     ...((period === 'month' || period === 'quarter' || period === 'year') && { period }),
@@ -44,7 +44,7 @@ export function paramsToQuery(p: ReportParams): string {
   const q = new URLSearchParams({ run: '1' });
   if (p.from) q.set('from', p.from);
   if (p.to) q.set('to', p.to);
-  if (p.entityId) q.set('entity', p.entityId);
+  for (const id of p.entityIds ?? []) q.append('entity', id);
   if (p.bank) q.set('bank', p.bank);
   if (p.month) q.set('month', p.month);
   if (p.period) q.set('period', p.period);

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { AlertCircle, Check, Loader2 } from 'lucide-react';
 import { generateChequeNumbers, issueBlankCheque } from '@/actions/chequeNumberActions';
 import Combobox from '@/components/Combobox';
+import MultiSelect from '@/components/MultiSelect';
 import { useFormAction } from '@/components/useFormAction';
 import { alertError, alertSuccess, btnPrimary, card, cn, input, label } from '@/lib/ui';
 import type { ActionResult } from '@/types';
@@ -30,13 +31,13 @@ interface RecordProps {
 export function RecordBlankCheque({ creditors, freeNumbers, banks }: RecordProps) {
   const router = useRouter();
   const [creditor, setCreditor] = useState('');
-  const [number, setNumber] = useState('');
+  const [numbers, setNumbers] = useState<string[]>([]);
   const [bank, setBank] = useState('');
   const { state, pending, formRef, onSubmit } = useFormAction(async (prev, fd) => {
     const result = await issueBlankCheque(prev, fd);
     if (result.success) {
       setCreditor('');
-      setNumber('');
+      setNumbers([]);
       setBank('');
       router.refresh();
     }
@@ -44,7 +45,7 @@ export function RecordBlankCheque({ creditors, freeNumbers, banks }: RecordProps
   });
   const match = creditors.find((c) => c.name.toLowerCase() === creditor.trim().toLowerCase());
   const creditorOptions = useMemo(() => creditors.map((c) => ({ value: c.name, hint: c.is_active ? undefined : 'Inactive' })), [creditors]);
-  const numberOptions = useMemo(() => freeNumbers.map((n) => ({ value: n })), [freeNumbers]);
+  const numberOptions = useMemo(() => freeNumbers.map((n) => ({ value: n, label: n })), [freeNumbers]);
   const bankOptions = useMemo(() => banks.map((b) => ({ value: b })), [banks]);
 
   return (
@@ -60,17 +61,23 @@ export function RecordBlankCheque({ creditors, freeNumbers, banks }: RecordProps
         <Combobox id="blank_creditor" value={creditor} onChange={setCreditor} options={creditorOptions} placeholder="Search creditors…" emptyText="No creditor matches this name" required />
       </div>
       <div>
-        <label htmlFor="blank_number" className={label}>Cheque Number *</label>
-        <Combobox
-          id="blank_number" name="cheque_number" value={number} onChange={setNumber} options={numberOptions} required
-          placeholder="Select a generated number or type one" emptyText="Not in the generated list — it will be registered as typed"
+        <label htmlFor="blank_number" className={label}>Cheque Number(s) *</label>
+        <MultiSelect
+          id="blank_number" name="cheque_number" selected={numbers} onChange={setNumbers} options={numberOptions}
+          allLabel="Select one or more cheque numbers" noun="cheques selected" allowCustom searchPlaceholder="Search or type a cheque number…"
         />
+        {numbers.length > 0 && (
+          <p className="mt-1.5 text-xs text-muted">
+            {numbers.length} cheque{numbers.length === 1 ? '' : 's'} will be recorded for this creditor
+            {numbers.length <= 6 ? `: ${numbers.join(', ')}` : ''}.
+          </p>
+        )}
       </div>
       <div>
         <label htmlFor="blank_bank" className={label}>Bank Name</label>
         <Combobox id="blank_bank" name="bank_name" value={bank} onChange={setBank} options={bankOptions} placeholder="Optional" emptyText="New bank — it will be saved as typed" />
       </div>
-      <button type="submit" disabled={pending || !match} className={cn(btnPrimary, 'w-full')}>
+      <button type="submit" disabled={pending || !match || numbers.length === 0} className={cn(btnPrimary, 'w-full')}>
         {pending ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</> : 'Record Blank Cheque'}
       </button>
     </form>
