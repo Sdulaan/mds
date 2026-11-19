@@ -113,7 +113,7 @@ export async function getDashboard(): Promise<DashboardData> {
       `SELECT e.name, COUNT(*)::int AS count, SUM(t.amount) AS amount
        FROM transactions t JOIN entities e ON e.id = t.entity_id
        WHERE t.transaction_type = 'DEBIT' AND t.status = 'PENDING'
-       GROUP BY e.id, e.name ORDER BY SUM(t.amount) DESC LIMIT 10`
+       GROUP BY e.id, e.name ORDER BY SUM(t.amount) DESC, e.name`
     ),
     // Creditors payable balance: opening balances + purchases − cheques cleared (a cheque is paid once it clears).
     query(

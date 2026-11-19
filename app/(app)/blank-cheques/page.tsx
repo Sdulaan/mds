@@ -2,7 +2,7 @@ import Link from 'next/link';
 import type { Metadata } from 'next';
 import { Printer, Undo2 } from 'lucide-react';
 import { releaseBlankCheque } from '@/actions/chequeNumberActions';
-import { requireUser } from '@/lib/auth';
+import { isAdmin, requireUser } from '@/lib/auth';
 import { getBankNames } from '@/lib/data/cheques';
 import { getBlankCheques, getAvailableNumbers, getCancelledNumbers, toBooks } from '@/lib/data/chequeNumbers';
 import { getEntityOptions } from '@/lib/data/entities';
@@ -17,7 +17,7 @@ export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Blank Cheques' };
 
 export default async function BlankChequesPage() {
-  await requireUser();
+  const user = await requireUser();
   const [blanks, available, cancelled, creditors, banks] = await Promise.all([
     getBlankCheques(),
     getAvailableNumbers(),
@@ -108,8 +108,8 @@ export default async function BlankChequesPage() {
           <p className={`${card} py-12 text-center text-sm text-subtle`}>No unused generated cheque numbers.</p>
         ) : (
           <>
-            <p className="mb-2 text-xs text-muted">Each cheque book holds 50 cheques. Open a book to edit or cancel a number.</p>
-            <ChequeBookList books={books} />
+            <p className="mb-2 text-xs text-muted">Each cheque book holds 50 cheques. Open a book to edit or cancel a number, or delete the entire book.</p>
+            <ChequeBookList books={books} canDeleteBook={isAdmin(user)} />
           </>
         )}
       </section>
@@ -117,10 +117,10 @@ export default async function BlankChequesPage() {
       {cancelled.length > 0 && (
         <section className="mt-8">
           <h2 className="mb-3 text-lg font-semibold text-fg">
-            Cancelled cheque numbers <span className="text-sm font-normal text-muted">· {cancelled.length.toLocaleString()}</span>
+            Cancelled cheque numbers <span className="text-sm font-normal text-muted">· {cancelled.length.toLocaleString()} · also listed in <Link href="/reports/cancelled-cheques" className="text-brand hover:underline">Creditors – Cancelled Cheques</Link></span>
           </h2>
           <CancelledList
-            rows={cancelled.map((c) => ({ id: c.id, number: c.cheque_number, bank: c.bank_name, reason: c.cancel_reason, cancelledOn: c.cancelled_at ? formatDate(c.cancelled_at.slice(0, 10)) : '' }))}
+            rows={cancelled.map((c) => ({ id: c.id, number: c.cheque_number, bank: c.bank_name, creditor: c.entity_name, reason: c.cancel_reason, cancelledOn: c.cancelled_at ? formatDate(c.cancelled_at.slice(0, 10)) : '' }))}
           />
         </section>
       )}

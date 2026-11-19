@@ -41,13 +41,13 @@ export async function savePurchase(_prev: ActionResult, formData: FormData): Pro
     const [entity] = await sql`SELECT name, type FROM entities WHERE id = ${entityId}`;
     if (!entity || entity.type !== 'VENDOR') return { success: false, message: 'Please select a creditor.' };
 
-    // Duplicate control: a creditor can't have two GRNs with the same number.
+    // Duplicate control: a GRN number can be recorded only once (across all creditors).
     const [dup] = await sql`
-      SELECT id, purchase_date::text AS purchase_date FROM purchases
-      WHERE entity_id = ${entityId} AND LOWER(TRIM(grn_number)) = LOWER(${grnNumber}) AND id <> ${existing ? id : '00000000-0000-0000-0000-000000000000'}
+      SELECT p.purchase_date::text AS purchase_date, e.name AS entity_name FROM purchases p JOIN entities e ON e.id = p.entity_id
+      WHERE LOWER(TRIM(p.grn_number)) = LOWER(${grnNumber}) AND p.id <> ${existing ? id : '00000000-0000-0000-0000-000000000000'}
       LIMIT 1`;
     if (dup) {
-      return { success: false, message: `GRN ${grnNumber} already exists for ${entity.name} (dated ${formatDate(dup.purchase_date)}). Duplicate GRN numbers are not allowed — check the number or edit the existing GRN.` };
+      return { success: false, message: `Duplicate GRN number: GRN ${grnNumber} has already been recorded for ${dup.entity_name} (dated ${formatDate(dup.purchase_date)}). It was not saved — check the number, or edit the existing GRN.` };
     }
 
     // GRNs already on cheques: the creditor can't change, and a lower amount (goods returned)

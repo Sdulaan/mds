@@ -4,11 +4,12 @@ import { Search } from 'lucide-react';
 import { getEntityOptions } from '@/lib/data/entities';
 import { PURCHASE_SORT_KEYS, getPurchases } from '@/lib/data/purchases';
 import { formatDate, recentMonths, todayKey } from '@/lib/dates';
-import { isUuid, pick } from '@/lib/filters';
+import { isDateKey, isUuid, pick } from '@/lib/filters';
 import { isMonthKey } from '@/lib/dates';
 import { formatAmount, formatNumber } from '@/lib/format';
 import { parseSort, sortHref, type Sort } from '@/lib/sort';
 import { btnSecondary, card, cn, input, td, th } from '@/lib/ui';
+import DateInput from '@/components/DateInput';
 import PageHeader from '@/components/PageHeader';
 import SortHeader, { SortInputs } from '@/components/SortHeader';
 import GrnBalance from '@/components/purchases/GrnBalance';
@@ -22,12 +23,16 @@ export default async function PurchasesPage({ searchParams }: PageProps<'/purcha
   const q = pick(sp, 'q')?.trim() || undefined;
   const entity = pick(sp, 'entity');
   const month = pick(sp, 'month');
+  const fromRaw = pick(sp, 'from');
+  const toRaw = pick(sp, 'to');
+  const from = isDateKey(fromRaw) ? fromRaw : undefined;
+  const to = isDateKey(toRaw) ? toRaw : undefined;
   const parsed = parseSort(sp, PURCHASE_SORT_KEYS);
-  const filters = { q, entityId: isUuid(entity) ? entity : undefined, month: isMonthKey(month) ? month : undefined, sort: parsed };
+  const filters = { q, entityId: isUuid(entity) ? entity : undefined, month: isMonthKey(month) ? month : undefined, from, to, sort: parsed };
   // Default order (no ?sort): newest first.
   const sort: Sort = parsed.sort ? parsed : { sort: 'date', dir: 'desc' };
   const filterQuery = new URLSearchParams(
-    Object.entries({ q, entity: filters.entityId, month: filters.month }).filter((e): e is [string, string] => !!e[1])
+    Object.entries({ q, entity: filters.entityId, month: filters.month, from, to }).filter((e): e is [string, string] => !!e[1])
   ).toString();
   const href = (column: string) => sortHref('/purchases', filterQuery, sort, column);
   const [creditors, result] = await Promise.all([getEntityOptions('VENDOR'), getPurchases(filters)]);
@@ -55,10 +60,21 @@ export default async function PurchasesPage({ searchParams }: PageProps<'/purcha
           {creditors.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
         <select name="month" defaultValue={filters.month ?? ''} className={cn(input, 'w-auto')} aria-label="Month">
-          <option value="">All months</option>
+          <option value="">Any month</option>
           {recentMonths(24).map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
         </select>
+        <div>
+          <label htmlFor="f-from" className="mb-1 block text-xs font-medium text-muted">From date</label>
+          <DateInput id="f-from" name="from" defaultValue={from} className="w-40" />
+        </div>
+        <div>
+          <label htmlFor="f-to" className="mb-1 block text-xs font-medium text-muted">To date</label>
+          <DateInput id="f-to" name="to" defaultValue={to} className="w-40" />
+        </div>
         <button type="submit" className={btnSecondary}>Filter</button>
+        {(q || filters.entityId || filters.month || from || to) && (
+          <Link href="/purchases" className={btnSecondary}>Clear</Link>
+        )}
       </form>
 
       <p className="mb-3 text-sm text-muted">

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { query, sql, transaction } from '@/lib/db';
-import { canEdit, getCurrentUser } from '@/lib/auth';
+import { canDelete, canEdit, getCurrentUser } from '@/lib/auth';
 import { diff, logAudit } from '@/lib/audit';
 import { todayKey } from '@/lib/dates';
 import { isUuid } from '@/lib/filters';
@@ -17,6 +17,7 @@ function revalidate() {
   revalidatePath('/blank-cheques');
   revalidatePath('/cheques/new');
   revalidatePath('/payables');
+  revalidatePath('/reports', 'layout');
 }
 
 const usedOnCheque = async (numbers: string[]) =>
@@ -220,8 +221,9 @@ export async function cancelChequeNumber(id: string, reason: string): Promise<Ac
     if ((await usedOnCheque([row.cheque_number])).length) {
       return { success: false, message: `${row.cheque_number} is already on a creditor cheque. Cancel that cheque instead.` };
     }
+    // The creditor stays on the record so the Cancelled Cheques report can show who it was given to.
     await sql`UPDATE cheque_numbers SET cancelled_at = NOW(), cancelled_by = ${user.id}, cancel_reason = ${why},
-                entity_id = NULL, issued_date = NULL, updated_at = NOW(), updated_by = ${user.id} WHERE id = ${id}`;
+                updated_at = NOW(), updated_by = ${user.id} WHERE id = ${id}`;
     await logAudit({
       table: 'system', recordId: id, action: 'UPDATE', user,
       summary: `Cancelled cheque number ${row.cheque_number}${row.entity_name ? ` (was a blank cheque for ${row.entity_name})` : ''} — ${why}`,
@@ -251,5 +253,45 @@ export async function restoreChequeNumber(id: string): Promise<ActionResult> {
   } catch (error) {
     console.error('[restoreChequeNumber]', error);
     return { success: false, message: 'Failed to restore the cheque number.' };
+  }
+}
+
+/**
+ * Delete a whole cheque book (all its registered numbers). Refused while any number in the book is on a
+ * creditor cheque or given to a creditor as a blank cheque, so existing cheque and creditor records are never
+ * lost. Cancelled numbers are kept for the Cancelled Cheques report. Administrators only.
+ */
+export async function deleteChequeBook(start: string): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  if (!user) return UNAUTHORIZED;
+  if (!canDelete(user)) return { success: false, message: 'Only a System Administrator can delete a cheque book.' };
+  const key = start.trim().slice(0, 100);
+  if (!key) return { success: false, message: 'Cheque book not found.' };
+  try {
+    const rows = await query(
+      `SELECT id, cheque_number, entity_id, cancelled_at FROM cheque_numbers
+       WHERE book_start = $1 OR (book_start IS NULL AND cheque_number = $1)`,
+      [key]
+    );
+    if (!rows.length) return { success: false, message: 'Cheque book not found.' };
+    const live = rows.filter((r) => !r.cancelled_at);
+    if (!live.length) return { success: false, message: 'This cheque book has no cheque numbers left to delete (cancelled numbers are kept for the record).' };
+    const used = new Set(await usedOnCheque(live.map((r) => r.cheque_number as string)));
+    const blocked = live.filter((r) => used.has(r.cheque_number) || r.entity_id).map((r) => r.cheque_number as string);
+    if (blocked.length) {
+      const shown = blocked.slice(0, 6).join(', ') + (blocked.length > 6 ? ` and ${blocked.length - 6} more` : '');
+      return { success: false, message: `This book cannot be deleted: ${shown} ${blocked.length === 1 ? 'is' : 'are'} already on a creditor cheque or given to a creditor as a blank cheque. Cancel or remove those first.` };
+    }
+    await query('DELETE FROM cheque_numbers WHERE id = ANY($1::uuid[])', [live.map((r) => r.id as string)]);
+    const numbers = live.map((r) => r.cheque_number as string).sort();
+    await logAudit({
+      table: 'system', action: 'DELETE', user,
+      summary: `Deleted cheque book ${numbers[0]}${numbers.length > 1 ? ` – ${numbers[numbers.length - 1]}` : ''} (${numbers.length} cheque number${numbers.length === 1 ? '' : 's'})`,
+    });
+    revalidate();
+    return { success: true, message: `Cheque book deleted (${numbers.length} cheque number${numbers.length === 1 ? '' : 's'}).` };
+  } catch (error) {
+    console.error('[deleteChequeBook]', error);
+    return { success: false, message: 'Failed to delete the cheque book.' };
   }
 }

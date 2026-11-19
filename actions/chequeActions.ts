@@ -370,3 +370,101 @@ export async function setChequeFlag(id: string, flag: StatusFlag, checked: boole
     return { success: false, message: 'Failed to update the status.' };
   }
 }
+
+/**
+ * Mark several customer cheques as deposited today in one go (the register's "select all" box).
+ * Only cheques still In Hand are changed, and standard users can only change their own entries.
+ */
+export async function depositCheques(ids: string[]): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  if (!user) return UNAUTHORIZED;
+  const clean = [...new Set(ids.filter(isUuid))].slice(0, 1000);
+  if (clean.length === 0) return { success: false, message: 'Select at least one cheque.' };
+
+  try {
+    const rows = await query(
+      `UPDATE transactions SET deposited_date = $2, updated_at = NOW(), updated_by = $3
+       WHERE id = ANY($1::uuid[]) AND transaction_type = 'CREDIT'
+         AND deposited_date IS NULL AND cleared_date IS NULL AND returned_date IS NULL
+         AND ($4 OR created_by = $3)
+       RETURNING cheque_number`,
+      [clean, todayKey(), user.id, isAdmin(user)]
+    );
+    if (rows.length === 0) return { success: false, message: 'None of the selected cheques could be marked as deposited (they may already be deposited, or you can only change your own entries).' };
+    const skipped = clean.length - rows.length;
+    await logAudit({
+      table: 'transactions', action: 'STATUS', user,
+      summary: `Marked ${rows.length} customer cheque${rows.length === 1 ? '' : 's'} as deposited (${rows.slice(0, 5).map((r) => r.cheque_number).join(', ')}${rows.length > 5 ? ', …' : ''})`,
+    });
+    revalidateCheques('CREDIT');
+    return {
+      success: true,
+      message: `${rows.length} cheque${rows.length === 1 ? '' : 's'} marked as deposited.${skipped ? ` ${skipped} skipped (already deposited or not yours).` : ''}`,
+    };
+  } catch (error) {
+    console.error('[depositCheques]', error);
+    return { success: false, message: 'Failed to mark the cheques as deposited.' };
+  }
+}
+
+/**
+ * Add several creditor cheques in one go (multiple cheque numbers selected): same creditor, GRNs, date and
+ * bank, one amount per cheque. Amounts are applied to the GRNs in order, oldest first, and each cheque is
+ * saved through saveCheque, so every single-cheque rule (one number per creditor, no duplicates,
+ * cancelled numbers refused) still applies. Each number is assigned only once.
+ */
+export async function saveChequeBatch(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  if (!user) return UNAUTHORIZED;
+
+  try {
+    const entityId = text(formData, 'entity_id', 36);
+    if (!isUuid(entityId)) return { success: false, message: 'Please select a creditor.' };
+    const numbers = formData.getAll('cheque_number').map((v) => String(v).trim().slice(0, 100)).filter(Boolean);
+    const amountsRaw = formData.getAll('amount').map((v) => String(v).trim());
+    if (numbers.length < 1) return { success: false, message: 'Select at least one cheque number.' };
+    if (new Set(numbers).size !== numbers.length) return { success: false, message: 'A cheque number was selected more than once.' };
+    if (amountsRaw.length !== numbers.length) return { success: false, message: 'Enter an amount for every selected cheque.' };
+    const amounts = amountsRaw.map((raw) => {
+      const n = Number(raw.replace(/,/g, ''));
+      if (raw === '' || isNaN(n) || n <= 0) throw new FormError('Enter an amount greater than zero for every selected cheque.');
+      return Math.round(n * 100) / 100;
+    });
+    const grnIds = [...new Set(formData.getAll('grn_ids').map(String).filter(isUuid))];
+    if (grnIds.length === 0) throw new FormError('Select at least one GRN for these cheques.');
+    const grns = await getGrnBalances(grnIds, entityId);
+    if (grns.length !== grnIds.length) throw new FormError('One of the selected GRNs no longer exists or belongs to another creditor. Please reselect.');
+    const total = amounts.reduce((s, a) => s + a, 0);
+    if (Math.round(total * 100) > Math.round(unpaidTotal(grns) * 100)) {
+      throw new FormError(`The cheque amounts total ${formatAmount(total)}, more than the unpaid total of the selected GRNs (${formatAmount(unpaidTotal(grns))}).`);
+    }
+
+    // Apply each cheque's amount to the GRNs in turn, so a later cheque only pays what is still unpaid.
+    let remaining = grns;
+    const saved: string[] = [];
+    for (let i = 0; i < numbers.length; i++) {
+      const { allocations, unallocated } = allocate(amounts[i], remaining);
+      const fail = (message: string): ActionResult => ({
+        success: false,
+        message: `${saved.length ? `Saved ${saved.join(', ')}. ` : 'Nothing was saved. '}Cheque ${numbers[i]} failed: ${message}${numbers.length - i > 1 ? ` The remaining ${numbers.length - i - 1} cheque${numbers.length - i - 1 === 1 ? ' was' : 's were'} not saved.` : ''}`,
+      });
+      if (unallocated > 0) return fail('its amount is more than what is left unpaid on the selected GRNs.');
+      const fd = new FormData();
+      for (const key of ['entity_id', 'cheque_date', 'bank_name', 'entry_date', 'remarks']) fd.set(key, String(formData.get(key) ?? ''));
+      fd.set('transaction_type', 'DEBIT');
+      fd.set('cheque_number', numbers[i]);
+      fd.set('amount', String(amounts[i]));
+      for (const a of allocations) fd.append('grn_ids', a.grn.id);
+      const result = await saveCheque({ success: false, message: '' }, fd);
+      if (!result.success) return fail(result.message);
+      saved.push(numbers[i]);
+      const used = new Map(allocations.map((a) => [a.grn.id, a.amount]));
+      remaining = remaining.map((g) => ({ ...g, remaining: g.remaining - (used.get(g.id) ?? 0) }));
+    }
+    return { success: true, message: `${saved.length} cheque${saved.length === 1 ? '' : 's'} added: ${saved.join(', ')}.` };
+  } catch (error) {
+    if (error instanceof FormError) return { success: false, message: error.message };
+    console.error('[saveChequeBatch]', error);
+    return { success: false, message: 'Failed to save the cheques. Please try again.' };
+  }
+}

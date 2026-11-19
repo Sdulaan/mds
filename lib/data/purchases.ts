@@ -27,6 +27,9 @@ export interface PurchaseFilters {
   q?: string;
   entityId?: string;
   month?: string;
+  /** Inclusive date range on the purchase / GRN date ('YYYY-MM-DD'). */
+  from?: string;
+  to?: string;
   sort?: Sort;
 }
 
@@ -58,6 +61,14 @@ export async function getPurchases(filters: PurchaseFilters = {}, limit = 200) {
   if (filters.month) {
     params.push(`${filters.month}-01`);
     conditions.push(`p.purchase_date >= $${params.length}::date AND p.purchase_date < ($${params.length}::date + INTERVAL '1 month')`);
+  }
+  if (filters.from) {
+    params.push(filters.from);
+    conditions.push(`p.purchase_date >= $${params.length}::date`);
+  }
+  if (filters.to) {
+    params.push(filters.to);
+    conditions.push(`p.purchase_date <= $${params.length}::date`);
   }
   if (filters.q) {
     params.push(`%${filters.q}%`);

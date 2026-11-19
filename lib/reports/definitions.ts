@@ -527,17 +527,46 @@ export const REPORTS: ReportDefinition[] = [
     async build(p) {
       const params: unknown[] = [];
       const rows = await fetchCheques('DEBIT', [`t.status = 'CANCELLED'`, ...standardConditions(p, 't.cancelled_date', params)], params, 't.cancelled_date, LOWER(e.name)');
+      // Cheque numbers cancelled before use (blank cheques given to a creditor, or numbers from a generated book).
+      const np: unknown[] = [];
+      const nc = ['cn.cancelled_at IS NOT NULL'];
+      const nadd = (v: unknown) => (np.push(v), `$${np.length}`);
+      if (p.entityIds?.length) nc.push(`cn.entity_id = ANY(${nadd(p.entityIds)}::uuid[])`);
+      if (p.bank) nc.push(`cn.bank_name ILIKE ${nadd(p.bank)}`);
+      if (p.from) nc.push(`cn.cancelled_at::date >= ${nadd(p.from)}::date`);
+      if (p.to) nc.push(`cn.cancelled_at::date <= ${nadd(p.to)}::date`);
+      const numbers = await query(
+        `SELECT e.name AS entity_name, cn.cheque_number, cn.bank_name, cn.cancelled_at::date::text AS cancelled_date, cn.cancel_reason
+         FROM cheque_numbers cn LEFT JOIN entities e ON e.id = cn.entity_id
+         WHERE ${nc.join(' AND ')} ORDER BY cn.cancelled_at, cn.cheque_number`,
+        np
+      );
+      const sections: Section[] = [{
+        title: numbers.length ? 'Cancelled creditor cheques' : undefined,
+        columns: [C.creditor, C.grn, C.chequeNo, C.chequeDate, { key: 'cancelled_date', label: 'Cancellation Date', type: 'date' }, C.amount],
+        rows: [
+          ...rows.map((c) => ({ cells: cells(c, { cancelled_date: c.cancelled_date }) })),
+          { kind: 'total', cells: { entity_name: `Total — ${plural(rows.length, 'cheque')}`, amount: sum(rows, (r) => r.amount) } },
+        ],
+      }];
+      if (numbers.length) {
+        sections.push({
+          title: 'Cancelled blank cheques and cheque book numbers',
+          columns: [C.creditor, C.chequeNo, C.bank, { key: 'cancelled_date', label: 'Cancellation Date', type: 'date' }, { key: 'cancel_reason', label: 'Reason' }],
+          rows: [
+            ...numbers.map((r) => ({ cells: { entity_name: r.entity_name ?? '—', cheque_number: r.cheque_number, bank_name: r.bank_name, cancelled_date: r.cancelled_date, cancel_reason: r.cancel_reason } })),
+            { kind: 'total' as const, cells: { entity_name: `Total — ${plural(numbers.length, 'cheque number')}` } },
+          ],
+        });
+      }
       return {
         title: this.title,
         subtitle: await describe(p),
-        summary: totalsSummary(rows, 'Total cancelled cheques', 'Total cancelled amount'),
-        sections: [{
-          columns: [C.creditor, C.grn, C.chequeNo, C.chequeDate, { key: 'cancelled_date', label: 'Cancellation Date', type: 'date' }, C.amount],
-          rows: [
-            ...rows.map((c) => ({ cells: cells(c, { cancelled_date: c.cancelled_date }) })),
-            { kind: 'total', cells: { entity_name: `Total — ${plural(rows.length, 'cheque')}`, amount: sum(rows, (r) => r.amount) } },
-          ],
-        }],
+        summary: [
+          ...totalsSummary(rows, 'Total cancelled cheques', 'Total cancelled amount'),
+          ...(numbers.length ? [{ label: 'Cancelled blank / book cheque numbers', value: numbers.length.toLocaleString() }] : []),
+        ],
+        sections,
       };
     },
   },

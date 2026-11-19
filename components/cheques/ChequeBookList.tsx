@@ -2,8 +2,9 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Ban, BookOpen, Check, Pencil, RotateCcw, X } from 'lucide-react';
-import { cancelChequeNumber, restoreChequeNumber, updateChequeNumber } from '@/actions/chequeNumberActions';
+import { Ban, BookOpen, Check, Pencil, RotateCcw, Trash2, X } from 'lucide-react';
+import { cancelChequeNumber, deleteChequeBook, restoreChequeNumber, updateChequeNumber } from '@/actions/chequeNumberActions';
+import ConfirmButton from '@/components/ConfirmButton';
 import { btnSmall, card, cn, input } from '@/lib/ui';
 import type { ActionResult } from '@/types';
 
@@ -39,23 +40,39 @@ function useRun() {
   return { pending, error, setError, run };
 }
 
-/** Cancel button: asks for a reason (kept in the audit trail). */
+/** Cancel button: opens a small form that requires a reason (kept in the audit trail and the Cancelled Cheques report). */
 export function CancelNumberButton({ id, number }: { id: string; number: string }) {
-  const { pending, error, run } = useRun();
-  return (
-    <span className="inline-flex flex-col items-start gap-1">
-      <button
-        type="button" disabled={pending} className={btnSmall}
-        onClick={() => {
-          const reason = window.prompt(`Cancel cheque number ${number}?\n\nReason (e.g. spoiled, lost, voided):`);
-          if (reason === null) return;
-          run(() => cancelChequeNumber(id, reason));
-        }}
-      >
-        <Ban className="h-3.5 w-3.5" /> {pending ? 'Working…' : 'Cancel'}
+  const { pending, error, setError, run } = useRun();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  if (!open) {
+    return (
+      <button type="button" className={btnSmall} onClick={() => setOpen(true)}>
+        <Ban className="h-3.5 w-3.5" /> Cancel
       </button>
-      {error && <span role="alert" className="max-w-60 text-xs text-bounced">{error}</span>}
-    </span>
+    );
+  }
+  return (
+    <div className="w-64 space-y-2 rounded-lg border border-line bg-surface p-3 text-left shadow-card">
+      <p className="text-xs font-medium text-fg">Cancel cheque {number}?</p>
+      <p className="text-xs text-muted">It can no longer be assigned or selected, and moves to Cancelled Cheques.</p>
+      <input
+        autoFocus value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} placeholder="Reason (required) e.g. spoiled, lost"
+        aria-label="Cancellation reason" className={cn(input, 'py-1.5 text-sm')}
+      />
+      {error && <p role="alert" className="text-xs text-bounced">{error}</p>}
+      <div className="flex gap-2">
+        <button
+          type="button" disabled={pending || !reason.trim()} className={btnSmall}
+          onClick={() => run(() => cancelChequeNumber(id, reason), () => { setOpen(false); setReason(''); })}
+        >
+          <Check className="h-3.5 w-3.5" /> {pending ? 'Working…' : 'Confirm cancel'}
+        </button>
+        <button type="button" disabled={pending} className={btnSmall} onClick={() => { setOpen(false); setReason(''); setError(''); }}>
+          <X className="h-3.5 w-3.5" /> Keep
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -106,7 +123,7 @@ function NumberRow({ n }: { n: BookNumber }) {
 }
 
 /** Stock grouped into cheque books of 50; open a book to edit or cancel individual numbers. */
-export function ChequeBookList({ books }: { books: BookView[] }) {
+export function ChequeBookList({ books, canDeleteBook = false }: { books: BookView[]; canDeleteBook?: boolean }) {
   return (
     <div className={`${card} divide-y divide-line text-sm`}>
       {books.map((b) => (
@@ -120,6 +137,20 @@ export function ChequeBookList({ books }: { books: BookView[] }) {
               {b.left === b.size ? `${b.left.toLocaleString()} cheque${b.left === 1 ? '' : 's'}` : `${b.left.toLocaleString()} of ${b.size.toLocaleString()} left`}
             </span>
           </summary>
+          {canDeleteBook && (
+            <div className="flex items-center justify-between gap-3 border-t border-line bg-surface-2/40 px-4 py-2">
+              <span className="text-xs text-muted">Cheque book {b.start} · {b.size.toLocaleString()} cheque{b.size === 1 ? '' : 's'}</span>
+              <ConfirmButton
+                action={deleteChequeBook.bind(null, b.start)}
+                confirm={`Delete the ENTIRE cheque book ${b.rangeLabels.join(', ')} (${b.left} unused cheque number${b.left === 1 ? '' : 's'})?
+
+This cannot be undone. Books with cheques already used or given to creditors cannot be deleted.`}
+                className={btnSmall}
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Delete entire book
+              </ConfirmButton>
+            </div>
+          )}
           <ul className="max-h-80 divide-y divide-line overflow-y-auto border-t border-line bg-surface-2/40">
             {b.numbers.map((n) => <NumberRow key={n.id} n={n} />)}
           </ul>
@@ -135,6 +166,7 @@ export interface CancelledView {
   bank: string | null;
   reason: string | null;
   cancelledOn: string;
+  creditor?: string | null;
 }
 
 export function CancelledList({ rows }: { rows: CancelledView[] }) {
@@ -146,7 +178,7 @@ export function CancelledList({ rows }: { rows: CancelledView[] }) {
           <div className="min-w-0">
             <span className="tabular-nums text-fg line-through decoration-subtle">{r.number}</span>
             {r.bank && <span className="ml-2 text-xs text-muted">{r.bank}</span>}
-            <p className="text-xs text-muted">Cancelled {r.cancelledOn}{r.reason ? ` — ${r.reason}` : ''}</p>
+            <p className="text-xs text-muted">{r.creditor ? `${r.creditor} · ` : ''}Cancelled {r.cancelledOn}{r.reason ? ` — ${r.reason}` : ''}</p>
           </div>
           <button type="button" disabled={pending} className={btnSmall} onClick={() => run(() => restoreChequeNumber(r.id))}>
             <RotateCcw className="h-3.5 w-3.5" /> Restore

@@ -4,8 +4,9 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AlertCircle, AlertTriangle, Check, Loader2, Plus } from 'lucide-react';
-import { saveCheque } from '@/actions/chequeActions';
+import { saveCheque, saveChequeBatch } from '@/actions/chequeActions';
 import Combobox from '@/components/Combobox';
+import MultiSelect from '@/components/MultiSelect';
 import GrnPicker from '@/components/cheques/GrnPicker';
 import { useFormAction } from '@/components/useFormAction';
 import { allocate, unpaidTotal, type GrnOption } from '@/lib/grn-allocation';
@@ -39,16 +40,23 @@ export default function ChequeForm({
   const router = useRouter();
   const [entityName, setEntityName] = useState(cheque?.entity_name ?? initialEntity);
   const [chequeNumber, setChequeNumber] = useState(cheque?.cheque_number ?? initialNumber);
+  // New creditor cheques can take several numbers at once (one cheque each, with its own amount).
+  const multiNumbers = type === 'DEBIT' && !cheque;
+  const [chequeNumbers, setChequeNumbers] = useState<string[]>(initialNumber ? [initialNumber] : []);
+  const [amounts, setAmounts] = useState<Record<string, string>>({});
+  const batch = multiNumbers && chequeNumbers.length > 1;
   const [bankName, setBankName] = useState(cheque?.bank_name ?? '');
   const [grnIds, setGrnIds] = useState<string[]>(initialGrnIds);
   const [amount, setAmount] = useState(cheque ? String(Number(cheque.amount)) : '');
   const { state, pending, formRef, onSubmit } = useFormAction(async (prev, fd) => {
-    const result = await saveCheque(prev, fd);
+    const result = batch ? await saveChequeBatch(prev, fd) : await saveCheque(prev, fd);
     if (result.success && cheque) router.refresh();
     // After adding, start the next cheque with empty dropdowns (the form reset only clears plain inputs).
     if (result.success && !cheque) {
       setEntityName('');
       setChequeNumber('');
+      setChequeNumbers([]);
+      setAmounts({});
       setBankName('');
       setGrnIds([]);
       setAmount('');
@@ -67,8 +75,9 @@ export default function ChequeForm({
       .map((n) => ({ value: n.cheque_number, hint: n.entity_name ?? undefined })),
     [availableNumbers, entityName]
   );
+  const picked = multiNumbers ? chequeNumbers : [chequeNumber.trim()];
   const takenBy = availableNumbers.find(
-    (n) => n.cheque_number === chequeNumber.trim() && n.entity_name && entityName.trim() && n.entity_name.toLowerCase() !== entityName.trim().toLowerCase()
+    (n) => picked.includes(n.cheque_number) && n.entity_name && entityName.trim() && n.entity_name.toLowerCase() !== entityName.trim().toLowerCase()
   )?.entity_name;
   const bankOptions = useMemo(() => banks.map((b) => ({ value: b })), [banks]);
   const isEdit = !!cheque;
@@ -83,6 +92,11 @@ export default function ChequeForm({
     if (next?.id !== match?.id) setGrnIds([]);
   };
   // Picking a blank cheque's number fills in the creditor it was given to.
+  const onNumbersChange = (values: string[]) => {
+    setChequeNumbers(values);
+    const blank = availableNumbers.find((n) => values.includes(n.cheque_number) && n.entity_name);
+    if (blank?.entity_name && !entityName) onEntityChange(blank.entity_name);
+  };
   const onNumberChange = (value: string) => {
     setChequeNumber(value);
     const blank = availableNumbers.find((n) => n.cheque_number === value.trim() && n.entity_name);
@@ -93,7 +107,11 @@ export default function ChequeForm({
     const total = unpaidTotal(creditorGrns.filter((g) => ids.includes(g.id)));
     setAmount(total > 0 ? total.toFixed(2) : '');
   };
-  const split = isDebit && selectedGrns.length ? allocate(Number(amount) || 0, selectedGrns) : null;
+  const split = isDebit && selectedGrns.length && !batch ? allocate(Number(amount) || 0, selectedGrns) : null;
+  const batchTotal = chequeNumbers.reduce((s, n) => s + (Number(amounts[n]) || 0), 0);
+  const batchUnpaid = unpaidTotal(selectedGrns);
+  const batchReady = !batch || (chequeNumbers.every((n) => Number(amounts[n]) > 0) && Math.round(batchTotal * 100) <= Math.round(batchUnpaid * 100));
+  const numberOptionsMulti = useMemo(() => numberOptions.map((o) => ({ value: o.value, label: o.hint ? `${o.value} — blank cheque for ${o.hint}` : o.value })), [numberOptions]);
 
   return (
     <form ref={formRef} onSubmit={onSubmit} className="space-y-6">
@@ -170,7 +188,22 @@ export default function ChequeForm({
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label htmlFor="cheque_number" className={label}>Cheque Number *</label>
-            {isDebit ? (
+            {isDebit && multiNumbers ? (
+              <>
+                <MultiSelect
+                  id="cheque_number" name="cheque_number" selected={chequeNumbers} onChange={onNumbersChange} options={numberOptionsMulti}
+                  allLabel="Select one or more cheque numbers" noun="cheques selected" allowCustom searchPlaceholder="Search or type a cheque number…"
+                />
+                {chequeNumbers.length > 0 && (
+                  <p className="mt-1.5 text-xs text-muted">
+                    Selected ({chequeNumbers.length}): <span className="tabular-nums text-fg">{chequeNumbers.length <= 12 ? chequeNumbers.join(', ') : `${chequeNumbers.slice(0, 12).join(', ')}, …`}</span>. Each number is used on one cheque only.
+                  </p>
+                )}
+                {takenBy && (
+                  <p className="mt-1.5 text-xs text-bounced">A selected cheque number is already recorded as a blank cheque for {takenBy}. Choose a different number.</p>
+                )}
+              </>
+            ) : isDebit ? (
               <>
               <Combobox
                 id="cheque_number" name="cheque_number" value={chequeNumber} onChange={onNumberChange} options={numberOptions} required
@@ -192,6 +225,26 @@ export default function ChequeForm({
             <DateInput id="cheque_date" name="cheque_date" required defaultValue={cheque?.cheque_date ?? ''} />
             {isEdit && <p className="mt-1 text-xs text-subtle">Change this to reschedule the cheque.</p>}
           </div>
+          {batch ? (
+            <div className="sm:col-span-2">
+              <span className={label}>Amount per cheque (LKR) *</span>
+              <ul className="space-y-2 rounded-lg border border-line p-3">
+                {chequeNumbers.map((n) => (
+                  <li key={n} className="flex items-center gap-3">
+                    <span className="w-28 shrink-0 font-mono text-sm text-fg">{n}</span>
+                    <input
+                      name="amount" type="number" required min="0.01" step="0.01" placeholder="0.00" aria-label={`Amount for cheque ${n}`}
+                      value={amounts[n] ?? ''} onChange={(e) => setAmounts((prev) => ({ ...prev, [n]: e.target.value }))}
+                      className={cn(input, 'tabular-nums')}
+                    />
+                  </li>
+                ))}
+              </ul>
+              <p className={cn('mt-1.5 text-xs', Math.round(batchTotal * 100) > Math.round(batchUnpaid * 100) ? 'text-bounced' : 'text-muted')}>
+                Total {formatNumber(batchTotal)}{selectedGrns.length ? ` of ${formatNumber(batchUnpaid)} unpaid on the selected GRNs` : ' — select the GRN(s) above'}. Amounts are applied to the GRNs oldest first.
+              </p>
+            </div>
+          ) : (
           <div>
             <label htmlFor="amount" className={label}>Amount (LKR) *</label>
             <div className="relative">
@@ -204,6 +257,7 @@ export default function ChequeForm({
               />
             </div>
           </div>
+          )}
           <div>
             <label htmlFor="bank_name" className={label}>Bank Name</label>
             <Combobox
@@ -261,8 +315,8 @@ export default function ChequeForm({
 
       {!readOnly && (
         <div className="flex flex-wrap gap-3">
-          <button type="submit" disabled={pending || !match || (isDebit && grnIds.length === 0)} className={cn(btnPrimary, 'min-w-40 py-3')}>
-            {pending ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</> : isEdit ? 'Save Changes' : 'Add Cheque'}
+          <button type="submit" disabled={pending || !match || (isDebit && grnIds.length === 0) || (multiNumbers && chequeNumbers.length === 0) || !batchReady} className={cn(btnPrimary, 'min-w-40 py-3')}>
+            {pending ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</> : isEdit ? 'Save Changes' : batch ? `Add ${chequeNumbers.length} Cheques` : 'Add Cheque'}
           </button>
           <Link href={type === 'CREDIT' ? '/receivables' : '/payables'} className={cn(btnSecondary, 'py-3')}>
             {isEdit ? 'Back to register' : 'Cancel'}
