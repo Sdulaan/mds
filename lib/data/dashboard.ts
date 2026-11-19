@@ -93,11 +93,12 @@ export async function getDashboard(): Promise<DashboardData> {
        FROM transactions WHERE transaction_type = 'CREDIT' AND status = 'CREDITED' AND cleared_date BETWEEN $1 AND $2 GROUP BY 1`,
       [start, end]
     ),
-    // Outstanding creditor cheques as they stood at each month end.
+    // Creditor cheques dated in each month that were still uncleared (not cleared or cancelled) at that month's end.
     query(
       `SELECT TO_CHAR(m, 'YYYY-MM') AS month, COUNT(t.id)::int AS count, COALESCE(SUM(t.amount), 0) AS amount
        FROM generate_series($1::date, $2::date, INTERVAL '1 month') AS m
        LEFT JOIN transactions t ON t.transaction_type = 'DEBIT'
+         AND t.cheque_date >= m::date
          AND t.cheque_date <= (m + INTERVAL '1 month' - INTERVAL '1 day')::date
          AND (t.cleared_date IS NULL OR t.cleared_date > (m + INTERVAL '1 month' - INTERVAL '1 day')::date)
          AND (t.cancelled_date IS NULL OR t.cancelled_date > (m + INTERVAL '1 month' - INTERVAL '1 day')::date)

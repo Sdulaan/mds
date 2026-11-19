@@ -134,7 +134,7 @@ async function DashboardContent() {
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <ChartCard
             title="Uncleared cheques per month"
-            subtitle="Running balance · every cheque dated up to each month end and still uncleared then (earlier months carry forward, so a month is not just that month’s cheques)"
+            subtitle="Cheques dated in each month that were still uncleared at that month’s end (each month shows its own cheques only)"
             data={toColumns(p.outstandingTrend)}
             barClass="bg-debit"
             countLabel="uncleared"
